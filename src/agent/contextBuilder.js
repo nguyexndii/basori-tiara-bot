@@ -55,7 +55,7 @@ async function buildServerContext(guild) {
       }
     });
 
-    // 3. Phân loại Roles (Loại bỏ @everyone khỏi danh sách nếu cần hoặc giữ để tham khảo)
+    // 3. Phân loại Roles
     const roles = guild.roles.cache
       .sort((a, b) => b.position - a.position)
       .map(r => ({
@@ -64,6 +64,7 @@ async function buildServerContext(guild) {
         color: r.hexColor,
         position: r.position,
         isEveryone: r.id === guild.id,
+        isAdmin: r.permissions.has(1n << 3n), // 0x8 Administrator
         managed: r.managed
       }))
       .slice(0, 50); // Giới hạn 50 role cao nhất để tiết kiệm token
@@ -73,7 +74,8 @@ async function buildServerContext(guild) {
         id: guild.id,
         name: guild.name,
         memberCount: guild.memberCount,
-        ownerId: guild.ownerId
+        ownerId: guild.ownerId,
+        everyoneRoleId: guild.id
       },
       categories,
       channels: {

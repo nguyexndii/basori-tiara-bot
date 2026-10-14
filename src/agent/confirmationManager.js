@@ -156,13 +156,12 @@ async function sendPlanPreviewEmbed(message, plan) {
     .setFooter({ text: `Plan ID: ${planId} • Tự hủy sau 90 giây nếu không xác nhận` })
     .setTimestamp();
 
-  // 4 Nút bấm (Nút Thực thi ban đầu bị disabled: true)
+  // 4 Nút bấm điều khiển (Nút Thực thi sẵn sàng 1-Click cho Admin tối cao)
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`butler_execute_${planId}`)
-      .setLabel('🔒 Thực thi Kế hoạch (Thả 🔐 để mở khóa)')
-      .setStyle(ButtonStyle.Success)
-      .setDisabled(true),
+      .setLabel('🟢 Xác nhận Thực thi')
+      .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId(`butler_edit_${planId}`)
       .setLabel('✏️ Chỉnh sửa')
@@ -185,65 +184,17 @@ async function sendPlanPreviewEmbed(message, plan) {
   plan.messageId = previewMessage.id;
   await savePendingPlan(plan);
 
-  // Bot tự thả sẵn 2 reaction 🔐 và ❌
-  await previewMessage.react('🔐').catch(() => {});
-  await previewMessage.react('❌').catch(() => {});
-
-  // Khởi tạo ReactionCollector lắng nghe trong 90 giây
-  const filter = (reaction, user) => 
-    ['🔐', '❌'].includes(reaction.emoji.name) && OWNER_ADMIN_IDS.includes(user.id);
-
-  const collector = previewMessage.createReactionCollector({ filter, time: 90 * 1000, max: 1 });
-
-  collector.on('collect', async (reaction, user) => {
-    if (reaction.emoji.name === '🔐') {
-      // Mở khóa nút Thực thi thành [🟢 XÁC NHẬN THỰC THI NGAY]
-      const unlockedRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`butler_execute_${planId}`)
-          .setLabel('🟢 XÁC NHẬN THỰC THI NGAY')
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(false),
-        new ButtonBuilder()
-          .setCustomId(`butler_edit_${planId}`)
-          .setLabel('✏️ Chỉnh sửa')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(`butler_json_${planId}`)
-          .setLabel('🔍 Xem JSON')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`butler_cancel_${planId}`)
-          .setLabel('🔴 Hủy bỏ')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-      const unlockedEmbed = EmbedBuilder.from(embed)
-        .spliceFields(1, 1, {
-          name: '🔓 Đã Mở Khóa An Toàn!',
-          value: `✅ Xác nhận bởi **${user.username}**. Sếp hãy bấm nút **[🟢 XÁC NHẬN THỰC THI NGAY]** bên dưới!`
-        });
-
-      await previewMessage.edit({ embeds: [unlockedEmbed], components: [unlockedRow] }).catch(() => {});
-    } else if (reaction.emoji.name === '❌') {
-      await deletePendingPlan(planId);
-      await previewMessage.edit({
-        content: '🔴 **Kế hoạch đã bị Hủy bỏ theo yêu cầu của Sếp!**',
-        embeds: [],
-        components: []
-      }).catch(() => {});
-    }
-  });
-
-  collector.on('end', async (_, reason) => {
-    if (reason === 'time') {
+  // Tự động hủy nếu không ai bấm trong 90 giây
+  setTimeout(async () => {
+    const p = await getPendingPlan(planId);
+    if (p) {
       await deletePendingPlan(planId);
       await previewMessage.edit({
         content: '⏳ **Kế hoạch đã hết hạn 90 giây và tự động hủy bỏ an toàn.**',
         components: []
       }).catch(() => {});
     }
-  });
+  }, 90 * 1000);
 }
 
 // 4. Xử lý Interaction (Button & Modal) cho Quản gia AI
@@ -259,6 +210,14 @@ async function handleButlerInteraction(interaction) {
   }
 
   const [, action, planId] = interaction.customId.split('_');
+
+  // --- NÚT CHỈNH SỬA ---
+  if (action === 'edit') {
+    return interaction.reply({
+      content: '✏️ **Sếp chỉ cần gõ lại yêu cầu mới với các điều chỉnh mong muốn ngay tại kênh này nhé!** Quản gia sẽ lập tức lập bảng kế hoạch mới.',
+      ephemeral: true
+    });
+  }
 
   // --- NÚT HỦY BỎ ---
   if (action === 'cancel') {
