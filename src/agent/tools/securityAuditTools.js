@@ -1,7 +1,7 @@
 // src/agent/tools/securityAuditTools.js
-// Nghiệp vụ Điều tra Audit Log, AutoMod, Anti-Raid & Hoàn tác (Rollback)
+// Nghiệp vụ Điều tra Audit Log, AutoMod, Anti-Raid, Audit Quyền Hạn & Hoàn tác (Rollback)
 
-const { AutoModerationRuleTriggerType, AutoModerationRuleEventType } = require('discord.js');
+const { AutoModerationRuleTriggerType, AutoModerationRuleEventType, PermissionFlagsBits } = require('discord.js');
 const { updateSettings } = require('../../database/storageAdapter');
 
 // 1. Truy vấn Audit Logs để điều tra sự việc (Read-Only)
@@ -33,7 +33,79 @@ async function queryAuditLogs(guild, args) {
   };
 }
 
-// 2. Cấu hình quy tắc Discord AutoMod
+// 2. Quét Kiểm Toán Quyền Hạn Server (Audit Permissions - Read-Only)
+async function auditServerPermissions(guild) {
+  await guild.channels.fetch().catch(() => {});
+  await guild.roles.fetch().catch(() => {});
+
+  const everyoneRole = guild.roles.everyone;
+  const exposedChannels = [];
+  const sensitiveRoles = [];
+
+  const sensitiveKeywords = ['admin', 'mod', 'staff', 'private', 'kin', 'vip', 'log', 'audit', 'secret', 'quan-tri', 'bao-mat'];
+
+  // 1. Quét kênh nhạy cảm nhưng @everyone xem/chat được
+  guild.channels.cache.forEach(ch => {
+    if (!ch || !ch.isTextBased()) return;
+    const lowerName = ch.name.toLowerCase();
+    const isSensitive = sensitiveKeywords.some(kw => lowerName.includes(kw));
+
+    if (isSensitive) {
+      const perms = ch.permissionsFor(everyoneRole);
+      if (perms && perms.has(PermissionFlagsBits.ViewChannel)) {
+        exposedChannels.push({
+          id: ch.id,
+          name: ch.name,
+          issue: 'Kênh có tên nhạy cảm nhưng @everyone vẫn có quyền XEM KÊNH!',
+          canSend: perms.has(PermissionFlagsBits.SendMessages)
+        });
+      }
+    }
+  });
+
+  // 2. Quét các Role thường nhưng sở hữu quyền nguy hiểm
+  const dangerousPerms = [
+    { flag: PermissionFlagsBits.Administrator, name: 'Administrator' },
+    { flag: PermissionFlagsBits.ManageGuild, name: 'ManageGuild' },
+    { flag: PermissionFlagsBits.ManageRoles, name: 'ManageRoles' },
+    { flag: PermissionFlagsBits.ManageChannels, name: 'ManageChannels' },
+    { flag: PermissionFlagsBits.BanMembers, name: 'BanMembers' },
+    { flag: PermissionFlagsBits.KickMembers, name: 'KickMembers' },
+    { flag: PermissionFlagsBits.MentionEveryone, name: 'MentionEveryone' }
+  ];
+
+  guild.roles.cache.forEach(role => {
+    if (!role || role.id === guild.id || role.managed) return;
+
+    const matchedDangerous = [];
+    dangerousPerms.forEach(dp => {
+      if (role.permissions.has(dp.flag)) {
+        matchedDangerous.push(dp.name);
+      }
+    });
+
+    if (matchedDangerous.length > 0) {
+      sensitiveRoles.push({
+        id: role.id,
+        name: role.name,
+        color: role.hexColor,
+        memberCount: role.members.size,
+        dangerousPermissions: matchedDangerous
+      });
+    }
+  });
+
+  return {
+    success: true,
+    action: 'AUDIT_SERVER_PERMISSIONS',
+    exposedChannelsCount: exposedChannels.length,
+    exposedChannels,
+    sensitiveRolesCount: sensitiveRoles.length,
+    sensitiveRoles
+  };
+}
+
+// 3. Cấu hình quy tắc Discord AutoMod
 async function configureDiscordAutoMod(guild, args) {
   const { action = 'create', name = 'AutoMod Chặn Từ Cấm', keywords = [], exemptRoles = [] } = args;
 
@@ -55,7 +127,14 @@ async function configureDiscordAutoMod(guild, args) {
       exemptRoles: exemptRoles
     });
 
-    return { success: true, action: 'CREATE_AUTOMOD_RULE', rule: { id: rule.id, name: rule.name } };
+    return { 
+      success: true, 
+      action: 'CREATE_AUTOMOD_RULE', 
+      createdId: rule.id,
+      targetId: rule.id, 
+      rule: { id: rule.id, name: rule.name },
+      afterState: { createdId: rule.id, name: rule.name }
+    };
   }
 
   const rules = await guild.autoModerationRules.fetch();
@@ -66,7 +145,7 @@ async function configureDiscordAutoMod(guild, args) {
   };
 }
 
-// 3. Cấu hình Anti-Raid và Anti-Spam thời gian thực
+// 4. Cấu hình Anti-Raid và Anti-Spam thời gian thực
 async function configureAntiRaidAndSpam(guild, args) {
   const { antiRaidEnabled, antiSpamEnabled, maxJoinThreshold } = args;
 
@@ -84,7 +163,7 @@ async function configureAntiRaidAndSpam(guild, args) {
   };
 }
 
-// 4. Hoàn tác Giao Dịch (Rollback Transaction)
+// 5. Hoàn tác Giao Dịch (Rollback Transaction)
 async function rollbackTransaction(guild, args) {
   const { transactionId } = args;
   const rollbackEngine = require('../rollbackEngine');
@@ -93,6 +172,7 @@ async function rollbackTransaction(guild, args) {
 
 module.exports = {
   queryAuditLogs,
+  auditServerPermissions,
   configureDiscordAutoMod,
   configureAntiRaidAndSpam,
   rollbackTransaction

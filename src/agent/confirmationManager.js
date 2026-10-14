@@ -12,9 +12,12 @@ const {
 } = require('discord.js');
 const { OWNER_ADMIN_IDS } = require('../config/ids');
 const { RISK_COLORS, requiresModalConfirmation } = require('../config/securityPolicy');
-const { savePendingPlan, getPendingPlan, deletePendingPlan } = require('../database/storageAdapter');
+const { savePendingPlan, getPendingPlan, deletePendingPlan, getLatestActionSnapshots } = require('../database/storageAdapter');
 const { executePlan, triggerKillSwitch } = require('./executionEngine');
 const rollbackEngine = require('./rollbackEngine');
+
+// Bộ nhớ đệm chống Race Condition & Double-Click khi người dùng nhấn nút liên tiếp
+const inFlightPlans = new Set();
 
 // 1. Gửi Embed Hỏi Lại khi câu lệnh còn mơ hồ hoặc thiếu dữ liệu (Clarification Step)
 async function sendClarificationEmbed(message, prompt, questions = []) {
@@ -250,9 +253,52 @@ async function handleButlerInteraction(interaction) {
     });
   }
 
-  // --- NÚT HOÀN TÁC (ROLLBACK) ---
-  if (action === 'rollback') {
+  // --- NÚT HOÀN TÁC (ROLLBACK & FORCEROLLBACK) ---
+  if (action === 'rollback' || action === 'forcerollback') {
     const txId = planId;
+
+    if (inFlightPlans.has(`rb_${txId}`)) {
+      return interaction.reply({
+        content: '⏳ Phiên này đang trong quá trình hoàn tác, vui lòng không nhấn liên tục!',
+        ephemeral: true
+      });
+    }
+
+    // Nếu không phải ép buộc hoàn tác, kiểm tra xem có phải phiên mới nhất không
+    if (action === 'rollback') {
+      const latestSnapshots = await getLatestActionSnapshots(interaction.guild.id, 5);
+      if (latestSnapshots && latestSnapshots.length > 0) {
+        const newest = latestSnapshots[0];
+        if (newest.transactionId !== txId) {
+          // Phiên này không phải là phiên mới nhất
+          const alertEmbed = new EmbedBuilder()
+            .setColor(0xE67E22)
+            .setTitle('⚠️ CẢNH BÁO: HOÀN TÁC PHIÊN CŨ KHÔNG PHẢI MỚI NHẤT')
+            .setDescription(
+              `Phiên \`${txId}\` **không phải là phiên mới nhất** của máy chủ!\n\n` +
+              `Đã có phiên \`${newest.transactionId}\` (*"${newest.prompt}"*) được hoàn tất sau phiên này.\n\n` +
+              `⚠️ **Rủi ro:** Hoàn tác một phiên cũ có thể gây xung đột quyền hoặc cấu hình với những thay đổi được tạo ra sau đó.\n\n` +
+              `Sếp có chắc chắn muốn ép buộc hoàn tác phiên này không?`
+            )
+            .setTimestamp();
+
+          const alertRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`butler_forcerollback_${txId}`)
+              .setLabel('⚠️ Tôi hiểu rủi ro - Tiếp tục Hoàn tác')
+              .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+              .setCustomId(`butler_cancel_${txId}`)
+              .setLabel('Hủy bỏ')
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          return interaction.reply({ embeds: [alertEmbed], components: [alertRow], ephemeral: true });
+        }
+      }
+    }
+
+    inFlightPlans.add(`rb_${txId}`);
     await interaction.deferReply();
     try {
       const res = await rollbackEngine.rollback(interaction.guild, txId);
@@ -261,11 +307,20 @@ async function handleButlerInteraction(interaction) {
       });
     } catch (err) {
       return interaction.editReply({ content: `❌ Lỗi Rollback: ${err.message}` });
+    } finally {
+      inFlightPlans.delete(`rb_${txId}`);
     }
   }
 
   // --- NÚT THỰC THI (EXECUTE) ---
   if (action === 'execute') {
+    if (inFlightPlans.has(planId)) {
+      return interaction.reply({
+        content: '⏳ Kế hoạch này đang được khởi động, vui lòng không nhấn liên tục!',
+        ephemeral: true
+      });
+    }
+
     const plan = await getPendingPlan(planId);
     if (!plan) {
       return interaction.reply({ content: '❌ Kế hoạch đã hết hạn hoặc không tìm thấy.', ephemeral: true });
@@ -300,6 +355,13 @@ async function handleButlerModalSubmit(interaction) {
   if (!interaction.customId.startsWith('butler_modal_')) return false;
 
   const planId = interaction.customId.replace('butler_modal_', '');
+  if (inFlightPlans.has(planId)) {
+    return interaction.reply({
+      content: '⏳ Kế hoạch này đang được khởi động, vui lòng không nhấn liên tục!',
+      ephemeral: true
+    });
+  }
+
   const plan = await getPendingPlan(planId);
   if (!plan) return interaction.reply({ content: '❌ Kế hoạch đã hết hạn.', ephemeral: true });
 
@@ -317,43 +379,50 @@ async function handleButlerModalSubmit(interaction) {
 
 // 6. Quy trình chạy thực tế với Embed cập nhật tiến độ & Nút Kill Switch
 async function runExecutionWorkflow(interaction, plan) {
-  await interaction.deferUpdate().catch(() => {});
-  await deletePendingPlan(plan.planId);
+  if (inFlightPlans.has(plan.planId)) return;
+  inFlightPlans.add(plan.planId);
 
+  let statusMsg = null;
   const statusEmbed = new EmbedBuilder()
     .setColor(0xF1C40F)
     .setTitle('⚙️ QUẢN GIA ĐANG THỰC THI KẾ HOẠCH...')
     .setDescription(`Đang xử lý: *"**${plan.prompt}**"*\n\n⏳ Chuẩn bị chạy ${plan.actions.length} bước...`)
     .setTimestamp();
 
-  const killRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`butler_kill_${plan.planId}`)
-      .setLabel('🛑 DỪNG KHẨN CẤP (KILL SWITCH)')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  const statusMsg = await interaction.message.edit({
-    embeds: [statusEmbed],
-    components: [killRow]
-  });
-
-  const onProgress = async (step, total, toolName) => {
-    statusEmbed.setDescription(
-      `Đang xử lý: *"**${plan.prompt}**"*\n\n⏳ **Đang chạy bước ${step}/${total}:** \`${toolName}\`...`
-    );
-    await statusMsg.edit({ embeds: [statusEmbed] }).catch(() => {});
-  };
-
   try {
+    await interaction.deferUpdate().catch(() => {});
+    await deletePendingPlan(plan.planId);
+
+    const killRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`butler_kill_${plan.planId}`)
+        .setLabel('🛑 DỪNG KHẨN CẤP (KILL SWITCH)')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    statusMsg = await interaction.message.edit({
+      embeds: [statusEmbed],
+      components: [killRow]
+    });
+
+    const onProgress = async (step, total, toolName) => {
+      statusEmbed.setDescription(
+        `Đang xử lý: *"**${plan.prompt}**"*\n\n⏳ **Đang chạy bước ${step}/${total}:** \`${toolName}\`...`
+      );
+      if (statusMsg) await statusMsg.edit({ embeds: [statusEmbed] }).catch(() => {});
+    };
+
     const execResult = await executePlan(interaction.guild, plan, interaction.user.id, onProgress);
 
     if (execResult.aborted) {
-      return statusMsg.edit({
-        content: `🛑 **ĐÃ DỪNG KHẨN CẤP VÀ HOÀN TÁC THÀNH CÔNG!**\nTransaction: \`${execResult.transactionId}\``,
-        embeds: [],
-        components: []
-      });
+      if (statusMsg) {
+        await statusMsg.edit({
+          content: `🛑 **ĐÃ DỪNG KHẨN CẤP VÀ HOÀN TÁC THÀNH CÔNG!**\nTransaction: \`${execResult.transactionId}\``,
+          embeds: [],
+          components: []
+        });
+      }
+      return;
     }
 
     // Hoàn thành xuất sắc -> Hiện nút Rollback
@@ -374,12 +443,18 @@ async function runExecutionWorkflow(interaction, plan) {
         .setStyle(ButtonStyle.Danger)
     );
 
-    await statusMsg.edit({ embeds: [doneEmbed], components: [rollbackRow] });
+    if (statusMsg) {
+      await statusMsg.edit({ embeds: [doneEmbed], components: [rollbackRow] });
+    }
   } catch (err) {
     statusEmbed.setColor(0xE74C3C)
       .setTitle('❌ ĐÃ XẢY RA LỖI TRONG QUÁ TRÌNH THỰC THI')
       .setDescription(`Lỗi: **${err.message}**\nCác bước trước đó đã được lưu vết an toàn.`);
-    await statusMsg.edit({ embeds: [statusEmbed], components: [] });
+    if (statusMsg) {
+      await statusMsg.edit({ embeds: [statusEmbed], components: [] }).catch(() => {});
+    }
+  } finally {
+    inFlightPlans.delete(plan.planId);
   }
 }
 

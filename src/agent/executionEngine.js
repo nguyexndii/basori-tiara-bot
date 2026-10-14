@@ -7,6 +7,8 @@ const { sleep } = require('../utils/rateLimiter');
 
 // Bản đồ cờ ngắt Kill Switch cho từng transaction
 const activeKillSwitches = new Map();
+// Khóa đồng bộ theo Guild: Chống Race Condition nhiều tiến trình thực thi/hoàn tác cùng lúc
+const activeGuildMutex = new Set();
 
 /**
  * Kích hoạt Kill Switch dừng khẩn cấp cho một giao dịch đang chạy
@@ -67,6 +69,12 @@ function resolveDynamicArgs(args, stepResults, createdEntities) {
  * @param {Function} onProgressCallback - Cập nhật tiến độ Embed
  */
 async function executePlan(guild, plan, adminId, onProgressCallback) {
+  // Chống Race Condition giữa các tiến trình chạy trên cùng 1 server
+  if (activeGuildMutex.has(guild.id)) {
+    throw new Error('Máy chủ đang có một tiến trình Quản gia AI (Thực thi hoặc Hoàn tác) đang chạy. Vui lòng chờ phiên hiện tại hoàn tất!');
+  }
+  activeGuildMutex.add(guild.id);
+
   const transactionId = `TX-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
   activeKillSwitches.set(transactionId, false);
 
@@ -125,15 +133,19 @@ async function executePlan(guild, plan, adminId, onProgressCallback) {
       if (result.channel) createdEntities[result.channel.name] = result.channel;
       if (result.role) createdEntities[result.role.name] = result.role;
 
+      const createdId = (result && result.afterState && result.afterState.createdId) || 
+                        (result && result.channel && result.channel.id) || 
+                        (result && result.role && result.role.id) || null;
+
       // 4. Lưu vết hành động vào Snapshot
       snapshot.actions.push({
         stepIndex: stepNum,
         toolName: action.toolName,
         targetType: action.toolName.toLowerCase().includes('role') ? 'ROLE' :
                     action.toolName.toLowerCase().includes('member') || action.toolName.toLowerCase().includes('warn') ? 'MEMBER' : 'CHANNEL',
-        targetId: (result.channel && result.channel.id) || (result.role && result.role.id) || resolvedArgs.channelId || resolvedArgs.roleId || resolvedArgs.userId || null,
+        targetId: createdId || resolvedArgs.channelId || resolvedArgs.roleId || resolvedArgs.userId || null,
         beforeState: result.beforeState || null,
-        afterState: result.afterState || null,
+        afterState: result.afterState || (createdId ? { createdId } : null),
         reversible: true
       });
 
@@ -156,10 +168,13 @@ async function executePlan(guild, plan, adminId, onProgressCallback) {
     await updateActionSnapshotStatus(transactionId, 'FAILED', { actions: snapshot.actions });
     activeKillSwitches.delete(transactionId);
     throw err;
+  } finally {
+    activeGuildMutex.delete(guild.id);
   }
 }
 
 module.exports = {
   executePlan,
-  triggerKillSwitch
+  triggerKillSwitch,
+  activeGuildMutex
 };

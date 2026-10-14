@@ -1,11 +1,11 @@
 // src/agent/tools/messageTools.js
-// Nghiệp vụ Tin nhắn, Dọn dẹp thông minh, Thông báo Embed, Poll & Tóm tắt hội thoại
+// Nghiệp vụ Tin nhắn, Dọn dẹp thông minh (Có Backup Transcript), Thông báo Embed, Poll & Tóm tắt hội thoại
 
-const { EmbedBuilder } = require('discord.js');
-const { assertNotProtected } = require('../../config/ids');
+const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { assertNotProtected, LOG_CHANNEL_ID } = require('../../config/ids');
 const { sanitizeUntrustedChat } = require('../promptGuard');
 
-// 1. Dọn dẹp tin nhắn thông minh (Smart Purge)
+// 1. Dọn dẹp tin nhắn thông minh (Tự động Backup Transcript vào Kênh Log trước khi xóa)
 async function smartPurgeMessages(guild, args) {
   const { channelId, amount = 10, userId, botsOnly = false, hasAttachments = false, containsWord } = args;
   assertNotProtected(channelId, 'kênh xóa tin nhắn');
@@ -27,6 +27,59 @@ async function smartPurgeMessages(guild, args) {
   });
 
   const targetMessages = Array.from(toDelete.values()).slice(0, Math.min(Number(amount), 100));
+
+  if (targetMessages.length === 0) {
+    return {
+      success: true,
+      action: 'SMART_PURGE_MESSAGES',
+      channelId,
+      deletedCount: 0,
+      message: 'Không tìm thấy tin nhắn nào thỏa mãn bộ lọc để xóa.'
+    };
+  }
+
+  // --- BẮT BUỘC BACKUP TRANSCRIPT VÀO KÊNH LOG TRƯỚC KHI XÓA ---
+  try {
+    const transcriptLines = targetMessages.map(m => {
+      const time = new Date(m.createdTimestamp).toLocaleString('vi-VN');
+      const attachments = m.attachments.map(a => a.url).join(', ');
+      return `[${time}] ${m.author.tag} (${m.author.id}): ${m.content} ${attachments ? `[Files: ${attachments}]` : ''}`;
+    }).reverse();
+
+    const transcriptContent = `=== BẢN SAO LƯU TIN NHẮN BỊ XÓA (PURGE TRANSCRIPT) ===\n` +
+      `Máy chủ: ${guild.name} (${guild.id})\n` +
+      `Kênh: #${channel.name} (${channel.id})\n` +
+      `Thời gian xóa: ${new Date().toLocaleString('vi-VN')}\n` +
+      `Tổng số tin nhắn: ${targetMessages.length}\n` +
+      `Bộ lọc: ${JSON.stringify({ userId, botsOnly, hasAttachments, containsWord })}\n` +
+      `====================================================\n\n` +
+      transcriptLines.join('\n');
+
+    const logChannel = LOG_CHANNEL_ID ? (guild.channels.cache.get(LOG_CHANNEL_ID) || await guild.channels.fetch(LOG_CHANNEL_ID).catch(() => null)) : null;
+
+    if (logChannel && logChannel.isTextBased()) {
+      const attachment = new AttachmentBuilder(Buffer.from(transcriptContent, 'utf-8'), {
+        name: `purge-${channel.name}-${Date.now()}.txt`
+      });
+
+      const auditEmbed = new EmbedBuilder()
+        .setColor(0xE74C3C)
+        .setTitle('🗑️ Backup Transcript Tin Nhắn Đã Xóa')
+        .setDescription(`Quản gia AI vừa thực hiện dọn dẹp **${targetMessages.length} tin nhắn** tại kênh <#${channel.id}>. Toàn bộ nội dung đã được sao lưu đính kèm bên dưới.`)
+        .addFields(
+          { name: 'Kênh thực hiện', value: `<#${channel.id}> (\`${channel.id}\`)`, inline: true },
+          { name: 'Số tin nhắn', value: `${targetMessages.length}`, inline: true },
+          { name: 'Thời gian', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true }
+        )
+        .setTimestamp();
+
+      await logChannel.send({ embeds: [auditEmbed], files: [attachment] }).catch(() => {});
+    }
+  } catch (err) {
+    console.error('Lỗi sao lưu transcript tin nhắn:', err.message);
+  }
+
+  // Thực hiện xóa hàng loạt
   const deleted = await channel.bulkDelete(targetMessages, true);
 
   return {
@@ -62,17 +115,23 @@ async function sendOrEditEmbedAnnouncement(guild, args) {
     payload.content = `<@&${pingRole}>`;
   }
 
-  // Nếu sửa tin nhắn cũ
   if (messageId) {
     const targetMsg = await channel.messages.fetch(messageId);
     if (!targetMsg) throw new Error(`Không tìm thấy tin nhắn cũ để sửa: ${messageId}`);
     const edited = await targetMsg.edit(payload);
-    return { success: true, action: 'EDIT_EMBED', messageId: edited.id, channelId };
+    return { success: true, action: 'EDIT_EMBED', messageId: edited.id, targetId: edited.id, channelId };
   }
 
-  // Gửi mới
   const sent = await channel.send(payload);
-  return { success: true, action: 'SEND_EMBED', messageId: sent.id, channelId };
+  return { 
+    success: true, 
+    action: 'SEND_EMBED', 
+    createdId: sent.id,
+    targetId: sent.id, 
+    messageId: sent.id, 
+    channelId,
+    afterState: { createdId: sent.id, channelId }
+  };
 }
 
 // 3. Tạo bảng Bình chọn (Poll)
@@ -87,13 +146,22 @@ async function createPoll(guild, args) {
     poll: {
       question: { text: question },
       answers: answers.slice(0, 10).map(a => ({ text: a })),
-      duration: Math.min(Math.max(Number(durationHours), 1), 168), // 1h đến 7 ngày
+      duration: Math.min(Math.max(Number(durationHours), 1), 168),
       allowMultiselect: Boolean(allowMultiselect)
     }
   };
 
   const sent = await channel.send(pollPayload);
-  return { success: true, action: 'CREATE_POLL', messageId: sent.id, channelId, question };
+  return { 
+    success: true, 
+    action: 'CREATE_POLL', 
+    createdId: sent.id,
+    targetId: sent.id, 
+    messageId: sent.id, 
+    channelId, 
+    question,
+    afterState: { createdId: sent.id, channelId }
+  };
 }
 
 // 4. Ghim, bỏ ghim và Reaction
@@ -107,19 +175,19 @@ async function managePinsAndReactions(guild, args) {
 
   if (action === 'pin') {
     await message.pin();
-    return { success: true, action: 'PIN_MESSAGE', messageId };
+    return { success: true, action: 'PIN_MESSAGE', targetId: messageId, messageId };
   }
   if (action === 'unpin') {
     await message.unpin();
-    return { success: true, action: 'UNPIN_MESSAGE', messageId };
+    return { success: true, action: 'UNPIN_MESSAGE', targetId: messageId, messageId };
   }
   if (action === 'react' && emoji) {
     await message.react(emoji);
-    return { success: true, action: 'REACT_MESSAGE', messageId, emoji };
+    return { success: true, action: 'REACT_MESSAGE', targetId: messageId, messageId, emoji };
   }
   if (action === 'clearReactions') {
     await message.reactions.removeAll();
-    return { success: true, action: 'CLEAR_REACTIONS', messageId };
+    return { success: true, action: 'CLEAR_REACTIONS', targetId: messageId, messageId };
   }
 
   throw new Error(`Thao tác Pin/Reaction không hợp lệ: ${action}`);
@@ -139,7 +207,6 @@ async function summarizeChannelConversation(guild, args) {
     return `[${time}] ${m.author.username}: ${m.content}`;
   }).join('\n');
 
-  // Bọc vào thẻ an toàn chống indirect prompt injection
   const securedText = sanitizeUntrustedChat(formattedLogs);
 
   return {

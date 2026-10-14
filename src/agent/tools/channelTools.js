@@ -1,5 +1,5 @@
 // src/agent/tools/channelTools.js
-// Nghiệp vụ Kênh, Danh mục, Voice, Stage, Forum, Thread & Webhook (Có Soft-Delete)
+// Nghiệp vụ Kênh, Danh mục, Voice, Stage, Forum, Thread & Webhook (Có Soft-Delete & Empty Trash)
 
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { assertNotProtected } = require('../../config/ids');
@@ -30,7 +30,7 @@ async function getOrCreateTrashCategory(guild) {
   return trashCat;
 }
 
-// 1. Tạo Kênh hoặc Category mới
+// 1. Tạo Kênh hoặc Category mới (Lưu createdId phục vụ Rollback)
 async function createChannel(guild, args) {
   const { name, type = 'text', parentId, topic, nsfw = false, slowmode = 0, bitrate, userLimit } = args;
 
@@ -63,8 +63,17 @@ async function createChannel(guild, args) {
   return {
     success: true,
     action: 'CREATE_CHANNEL',
+    createdId: created.id,
+    targetId: created.id,
     channel: {
       id: created.id,
+      name: created.name,
+      type: type,
+      parentId: created.parentId
+    },
+    beforeState: null,
+    afterState: {
+      createdId: created.id,
       name: created.name,
       type: type,
       parentId: created.parentId
@@ -103,6 +112,7 @@ async function modifyChannel(guild, args) {
     success: true,
     action: 'MODIFY_CHANNEL',
     channelId: updated.id,
+    targetId: updated.id,
     beforeState,
     afterState: {
       name: updated.name,
@@ -136,6 +146,7 @@ async function moveAndReorderChannels(guild, args) {
     success: true,
     action: 'MOVE_CHANNEL',
     channelId: updated.id,
+    targetId: updated.id,
     beforeState,
     afterState: { parentId: updated.parentId, position: updated.position }
   };
@@ -152,7 +163,11 @@ async function cloneChannel(guild, args) {
   return {
     success: true,
     action: 'CLONE_CHANNEL',
-    clonedChannel: { id: cloned.id, name: cloned.name, parentId: cloned.parentId }
+    createdId: cloned.id,
+    targetId: cloned.id,
+    clonedChannel: { id: cloned.id, name: cloned.name, parentId: cloned.parentId },
+    beforeState: null,
+    afterState: { createdId: cloned.id, name: cloned.name, parentId: cloned.parentId }
   };
 }
 
@@ -164,7 +179,6 @@ async function softDeleteChannel(guild, args) {
   const channel = await guild.channels.fetch(channelId);
   if (!channel) throw new Error(`Không tìm thấy kênh có ID: ${channelId}`);
 
-  // Lưu trạng thái trước khi xóa mềm
   const beforeState = {
     originalName: channel.name,
     originalParentId: channel.parentId,
@@ -179,7 +193,6 @@ async function softDeleteChannel(guild, args) {
 
   const trashCat = await getOrCreateTrashCategory(guild);
 
-  // Đổi tên và chuyển vào category thùng rác ẩn
   const updated = await channel.edit({
     name: `deleted-${channel.name}`.slice(0, 32),
     parent: trashCat.id,
@@ -190,6 +203,7 @@ async function softDeleteChannel(guild, args) {
     success: true,
     action: 'SOFT_DELETE_CHANNEL',
     channelId: updated.id,
+    targetId: updated.id,
     beforeState,
     afterState: { name: updated.name, parentId: updated.parentId, reason }
   };
@@ -209,7 +223,6 @@ async function restoreDeletedChannel(guild, args) {
 
   const restored = await channel.edit(updates);
 
-  // Khôi phục lại quyền nếu có
   if (Array.isArray(permissionOverwrites) && permissionOverwrites.length > 0) {
     await restored.permissionOverwrites.set(permissionOverwrites).catch(() => {});
   }
@@ -218,6 +231,7 @@ async function restoreDeletedChannel(guild, args) {
     success: true,
     action: 'RESTORE_CHANNEL',
     channelId: restored.id,
+    targetId: restored.id,
     name: restored.name,
     parentId: restored.parentId
   };
@@ -249,6 +263,7 @@ async function lockOrUnlockChannels(guild, args) {
     success: true,
     action: lock ? 'LOCK_CHANNEL' : 'UNLOCK_CHANNEL',
     channelId: channel.id,
+    targetId: channel.id,
     beforeState,
     afterState: { locked: lock, reason }
   };
@@ -257,6 +272,8 @@ async function lockOrUnlockChannels(guild, args) {
 // 8. Quản lý Threads
 async function manageThreads(guild, args) {
   const { channelId, threadId, action, name, autoArchiveDuration = 1440, locked = false } = args;
+  assertNotProtected(channelId, 'kênh thread');
+
   const channel = await guild.channels.fetch(channelId);
   if (!channel) throw new Error(`Không tìm thấy kênh: ${channelId}`);
 
@@ -265,7 +282,14 @@ async function manageThreads(guild, args) {
       name: name || 'Thảo luận mới',
       autoArchiveDuration: Number(autoArchiveDuration)
     });
-    return { success: true, action: 'CREATE_THREAD', threadId: thread.id, name: thread.name };
+    return { 
+      success: true, 
+      action: 'CREATE_THREAD', 
+      createdId: thread.id,
+      targetId: thread.id, 
+      name: thread.name,
+      afterState: { createdId: thread.id, name: thread.name }
+    };
   }
 
   if (action === 'archive' || action === 'lock' || action === 'unarchive') {
@@ -274,21 +298,30 @@ async function manageThreads(guild, args) {
     if (action === 'archive') await thread.setArchived(true);
     if (action === 'unarchive') await thread.setArchived(false);
     if (action === 'lock') await thread.setLocked(Boolean(locked));
-    return { success: true, action: `THREAD_${action.toUpperCase()}`, threadId: thread.id };
+    return { success: true, action: `THREAD_${action.toUpperCase()}`, targetId: thread.id, threadId: thread.id };
   }
 
   throw new Error(`Hành động Thread không hỗ trợ: ${action}`);
 }
 
-// 9. Quản lý Webhooks
+// 9. Quản lý Webhooks (Bảo vệ tuyệt đối kênh Admin & Log)
 async function manageWebhooks(guild, args) {
   const { channelId, action = 'list', name = 'Bot-Webhook', webhookId } = args;
+  assertNotProtected(channelId, 'kênh quản lý webhook');
+
   const channel = await guild.channels.fetch(channelId);
   if (!channel) throw new Error(`Không tìm thấy kênh: ${channelId}`);
 
   if (action === 'create') {
     const hook = await channel.createWebhook({ name });
-    return { success: true, action: 'CREATE_WEBHOOK', webhook: { id: hook.id, name: hook.name, url: hook.url } };
+    return { 
+      success: true, 
+      action: 'CREATE_WEBHOOK', 
+      createdId: hook.id,
+      targetId: hook.id,
+      webhook: { id: hook.id, name: hook.name, url: hook.url },
+      afterState: { createdId: hook.id, name: hook.name }
+    };
   }
 
   if (action === 'delete') {
@@ -296,7 +329,7 @@ async function manageWebhooks(guild, args) {
     const target = hooks.get(webhookId);
     if (!target) throw new Error(`Không tìm thấy Webhook ID: ${webhookId}`);
     await target.delete();
-    return { success: true, action: 'DELETE_WEBHOOK', webhookId };
+    return { success: true, action: 'DELETE_WEBHOOK', targetId: webhookId, webhookId };
   }
 
   const hooks = await channel.fetchWebhooks();
@@ -304,6 +337,49 @@ async function manageWebhooks(guild, args) {
     success: true,
     action: 'LIST_WEBHOOKS',
     webhooks: hooks.map(h => ({ id: h.id, name: h.name, channelId: h.channelId }))
+  };
+}
+
+// 10. Dọn sạch Category Thùng Rác (Empty Trash - Yêu cầu xác nhận cấp CRITICAL)
+async function emptyTrashCategory(guild, args) {
+  const { confirmPermanentDelete = false } = args;
+  const trashCat = guild.channels.cache.find(
+    ch => ch.type === ChannelType.GuildCategory && ch.name === TRASH_CATEGORY_NAME
+  );
+
+  if (!trashCat) {
+    return { success: true, action: 'EMPTY_TRASH', message: 'Thùng rác hiện đang trống.' };
+  }
+
+  // Lấy các kênh con nằm trong thùng rác
+  const trashedChannels = guild.channels.cache.filter(ch => ch.parentId === trashCat.id);
+
+  if (!confirmPermanentDelete) {
+    return {
+      success: true,
+      action: 'LIST_TRASH',
+      trashedCount: trashedChannels.size,
+      channels: trashedChannels.map(c => ({ id: c.id, name: c.name, createdAt: c.createdAt }))
+    };
+  }
+
+  // Xóa vĩnh viễn toàn bộ các kênh trong thùng rác
+  let deletedCount = 0;
+  for (const [, ch] of trashedChannels) {
+    try {
+      await ch.delete('Xóa vĩnh viễn theo lệnh dọn sạch thùng rác');
+      deletedCount++;
+    } catch {}
+  }
+
+  // Xóa luôn category thùng rác
+  await trashCat.delete().catch(() => {});
+
+  return {
+    success: true,
+    action: 'EMPTY_TRASH_PERMANENT',
+    deletedCount,
+    message: `Đã dọn sạch vĩnh viễn ${deletedCount} kênh và gỡ bỏ Thùng Rác.`
   };
 }
 
@@ -316,5 +392,6 @@ module.exports = {
   restoreDeletedChannel,
   lockOrUnlockChannels,
   manageThreads,
-  manageWebhooks
+  manageWebhooks,
+  emptyTrashCategory
 };

@@ -27,6 +27,7 @@ async function modifyGuildSettings(guild, args) {
   return {
     success: true,
     action: 'MODIFY_GUILD_SETTINGS',
+    targetId: guild.id,
     beforeState,
     afterState: { name: guild.name, verificationLevel: guild.verificationLevel, ...dbUpdates }
   };
@@ -39,26 +40,40 @@ async function manageEmojisAndStickers(guild, args) {
   if (type === 'emoji') {
     if (action === 'create' && name && url) {
       const emoji = await guild.emojis.create({ attachment: url, name });
-      return { success: true, action: 'CREATE_EMOJI', emoji: { id: emoji.id, name: emoji.name } };
+      return { 
+        success: true, 
+        action: 'CREATE_EMOJI', 
+        createdId: emoji.id,
+        targetId: emoji.id, 
+        emoji: { id: emoji.id, name: emoji.name },
+        afterState: { createdId: emoji.id, name: emoji.name }
+      };
     }
     if (action === 'delete' && id) {
       const emoji = await guild.emojis.fetch(id);
       if (!emoji) throw new Error(`Không tìm thấy Emoji ID: ${id}`);
       await emoji.delete();
-      return { success: true, action: 'DELETE_EMOJI', id };
+      return { success: true, action: 'DELETE_EMOJI', targetId: id, id };
     }
   }
 
   if (type === 'sticker') {
     if (action === 'create' && name && url) {
       const sticker = await guild.stickers.create({ file: url, name, tags: name });
-      return { success: true, action: 'CREATE_STICKER', sticker: { id: sticker.id, name: sticker.name } };
+      return { 
+        success: true, 
+        action: 'CREATE_STICKER', 
+        createdId: sticker.id,
+        targetId: sticker.id, 
+        sticker: { id: sticker.id, name: sticker.name },
+        afterState: { createdId: sticker.id, name: sticker.name }
+      };
     }
     if (action === 'delete' && id) {
       const sticker = await guild.stickers.fetch(id);
       if (!sticker) throw new Error(`Không tìm thấy Sticker ID: ${id}`);
       await sticker.delete();
-      return { success: true, action: 'DELETE_STICKER', id };
+      return { success: true, action: 'DELETE_STICKER', targetId: id, id };
     }
   }
 
@@ -68,14 +83,13 @@ async function manageEmojisAndStickers(guild, args) {
 // 3. Quản lý Soundboard
 async function manageSoundboard(guild, args) {
   const { action = 'list', soundId } = args;
-  // Discord.js soundboard fetch
   try {
     const sounds = await guild.soundboard.fetchSounds();
     if (action === 'delete' && soundId) {
       const target = sounds.get(soundId);
       if (!target) throw new Error(`Không tìm thấy âm thanh Soundboard: ${soundId}`);
       await target.delete();
-      return { success: true, action: 'DELETE_SOUND', soundId };
+      return { success: true, action: 'DELETE_SOUND', targetId: soundId, soundId };
     }
     return {
       success: true,
@@ -99,12 +113,20 @@ async function manageInvites(guild, args) {
       maxUses: Number(maxUses),
       unique: true
     });
-    return { success: true, action: 'CREATE_INVITE', code: invite.code, url: invite.url };
+    return { 
+      success: true, 
+      action: 'CREATE_INVITE', 
+      createdId: invite.code,
+      targetId: invite.code, 
+      code: invite.code, 
+      url: invite.url,
+      afterState: { createdId: invite.code, url: invite.url }
+    };
   }
 
   if (action === 'delete' && inviteCode) {
     await guild.invites.delete(inviteCode);
-    return { success: true, action: 'DELETE_INVITE', inviteCode };
+    return { success: true, action: 'DELETE_INVITE', targetId: inviteCode, inviteCode };
   }
 
   const invites = await guild.invites.fetch();
@@ -133,14 +155,21 @@ async function manageScheduledEvents(guild, args) {
       entityType: entityType === 'stage' ? GuildScheduledEventEntityType.StageInstance : GuildScheduledEventEntityType.Voice,
       channel: channelId
     });
-    return { success: true, action: 'CREATE_EVENT', event: { id: event.id, name: event.name } };
+    return { 
+      success: true, 
+      action: 'CREATE_EVENT', 
+      createdId: event.id,
+      targetId: event.id, 
+      event: { id: event.id, name: event.name },
+      afterState: { createdId: event.id, name: event.name }
+    };
   }
 
   if (action === 'delete' && eventId) {
     const event = await guild.scheduledEvents.fetch(eventId);
     if (!event) throw new Error(`Không tìm thấy Sự kiện ID: ${eventId}`);
     await event.delete();
-    return { success: true, action: 'DELETE_EVENT', eventId };
+    return { success: true, action: 'DELETE_EVENT', targetId: eventId, eventId };
   }
 
   const events = await guild.scheduledEvents.fetch();

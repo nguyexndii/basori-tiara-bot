@@ -3,13 +3,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const { TOKEN } = require('./src/config/env');
 const { connectDatabase } = require('./src/database/mongoose');
 const { loadAllCommands } = require('./src/commands');
 const { logSystemError } = require('./src/utils/logger');
 
-// 1. Khởi tạo Client Discord với đầy đủ các Intents cần thiết cho Quản gia AI
+// 1. Khởi tạo Client Discord với đầy đủ các Intents và Partials cần thiết cho Quản gia AI
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -19,6 +19,11 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildEmojisAndStickers
+  ],
+  partials: [
+    Partials.Message,
+    Partials.Channel,
+    Partials.Reaction
   ]
 });
 

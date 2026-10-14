@@ -85,6 +85,16 @@ const functionDeclarations = [
     }
   },
   {
+    name: 'emptyTrashCategory',
+    description: 'Dọn sạch Thùng Rác (Liệt kê hoặc xóa vĩnh viễn toàn bộ các kênh đang nằm trong danh mục Thùng Rác)',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        confirmPermanentDelete: { type: 'BOOLEAN', description: 'Đặt true để xác nhận xóa vĩnh viễn toàn bộ các kênh trong thùng rác' }
+      }
+    }
+  },
+  {
     name: 'lockOrUnlockChannels',
     description: 'Khóa hoặc Mở khóa gửi tin nhắn trên kênh cho @everyone khi có sự cố',
     parameters: {
@@ -115,7 +125,7 @@ const functionDeclarations = [
   // --- VAI TRÒ & PHÂN QUYỀN ---
   {
     name: 'createRole',
-    description: 'Tạo Role mới trên server',
+    description: 'Tạo Role mới trên server (Tuyệt đối không cấp quyền Administrator)',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -174,7 +184,7 @@ const functionDeclarations = [
   },
   {
     name: 'setChannelPermissionOverwrites',
-    description: 'Phân quyền chi tiết cho Role hoặc User trên Kênh/Category (vd: xem, chat, gửi ảnh, react)',
+    description: 'Phân quyền chi tiết cho Role hoặc User trên Kênh/Category (Cấm can thiệp kênh Admin & Log)',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -317,7 +327,7 @@ const functionDeclarations = [
   // --- TIN NHẮN & THÔNG BÁO ---
   {
     name: 'smartPurgeMessages',
-    description: 'Xóa tin nhắn thông minh có bộ lọc (lọc theo người gửi, bot, file đính kèm, từ khóa)',
+    description: 'Xóa tin nhắn thông minh có bộ lọc (Tự động sao lưu Transcript vào kênh Log trước khi xóa)',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -403,6 +413,14 @@ const functionDeclarations = [
     }
   },
   {
+    name: 'auditServerPermissions',
+    description: 'Quét toàn bộ server để phát hiện các kênh và Role đang bị hở quyền bảo mật (Read-Only)',
+    parameters: {
+      type: 'OBJECT',
+      properties: {}
+    }
+  },
+  {
     name: 'rollbackTransaction',
     description: 'Hoàn tác 100% một phiên giao dịch trước đó theo mã Transaction ID',
     parameters: {
@@ -424,6 +442,7 @@ const TOOL_HANDLERS = {
   cloneChannel: channelTools.cloneChannel,
   softDeleteChannel: channelTools.softDeleteChannel,
   restoreDeletedChannel: channelTools.restoreDeletedChannel,
+  emptyTrashCategory: channelTools.emptyTrashCategory,
   lockOrUnlockChannels: channelTools.lockOrUnlockChannels,
   manageThreads: channelTools.manageThreads,
   manageWebhooks: channelTools.manageWebhooks,
@@ -465,6 +484,7 @@ const TOOL_HANDLERS = {
 
   // Security & Audit
   queryAuditLogs: securityAuditTools.queryAuditLogs,
+  auditServerPermissions: securityAuditTools.auditServerPermissions,
   configureDiscordAutoMod: securityAuditTools.configureDiscordAutoMod,
   configureAntiRaidAndSpam: securityAuditTools.configureAntiRaidAndSpam,
   rollbackTransaction: securityAuditTools.rollbackTransaction

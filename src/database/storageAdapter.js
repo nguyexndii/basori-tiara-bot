@@ -226,6 +226,27 @@ async function updateActionSnapshotStatus(transactionId, status, additionalField
   return null;
 }
 
+// 8b. Lấy danh sách ActionSnapshot hoàn thành gần nhất của Guild
+async function getLatestActionSnapshots(guildId, limit = 5) {
+  if (getDatabaseStatus()) {
+    try {
+      const docs = await ActionSnapshot.find({ guildId, status: 'COMPLETED' })
+        .sort({ completedAt: -1, createdAt: -1 })
+        .limit(limit);
+      return docs.map(d => d.toObject());
+    } catch (err) {
+      console.error('Lỗi lấy latest ActionSnapshots MongoDB:', err.message);
+    }
+  }
+
+  const data = readJson();
+  const all = Object.values(data.snapshots || {})
+    .filter(s => s.guildId === guildId && s.status === 'COMPLETED')
+    .sort((a, b) => new Date(b.completedAt || b.createdAt) - new Date(a.completedAt || a.createdAt))
+    .slice(0, limit);
+  return all;
+}
+
 // ==================== QUẢN LÝ PENDING PLAN (BẢN NHÁP CHỜ DUYỆT) ====================
 
 // 9. Lưu PendingPlan
@@ -303,6 +324,7 @@ module.exports = {
   updateSettings,
   saveActionSnapshot,
   getActionSnapshot,
+  getLatestActionSnapshots,
   updateActionSnapshotStatus,
   savePendingPlan,
   getPendingPlan,

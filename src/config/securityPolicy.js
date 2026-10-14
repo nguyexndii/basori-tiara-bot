@@ -2,10 +2,10 @@
 // Phân loại mức độ rủi ro của từng công cụ và chính sách phê duyệt Zero-Trust
 
 const RISK_LEVELS = {
-  READ_ONLY: 'READ_ONLY', // Không thay đổi gì trên server (xem thông tin, audit log, tóm tắt)
+  READ_ONLY: 'READ_ONLY', // Không thay đổi gì trên server (xem thông tin, audit log, tóm tắt, audit quyền)
   LOW: 'LOW',             // Thay đổi nhẹ (tạo kênh, tạo role, đổi màu, gửi thông báo embed)
   MEDIUM: 'MEDIUM',       // Thay đổi vừa (phân quyền kênh, di chuyển kênh/role, slowmode, timeout thành viên)
-  CRITICAL: 'CRITICAL'    // Rủi ro cao (soft-delete kênh, xóa/ẩn role, quarantine/ban/kick, xóa tin nhắn hàng loạt)
+  CRITICAL: 'CRITICAL'    // Rủi ro cao (soft-delete kênh, dọn sạch thùng rác, xóa/ẩn role, quarantine/ban/kick, xóa tin nhắn > 5)
 };
 
 // Bảng ánh xạ từng Tool tới mức độ rủi ro
@@ -14,6 +14,7 @@ const TOOL_RISK_MAP = {
   queryAuditLogs: RISK_LEVELS.READ_ONLY,
   summarizeChannelConversation: RISK_LEVELS.READ_ONLY,
   inspectPruneCount: RISK_LEVELS.READ_ONLY,
+  auditServerPermissions: RISK_LEVELS.READ_ONLY,
 
   // Low Risk Tools
   createChannel: RISK_LEVELS.LOW,
@@ -49,6 +50,7 @@ const TOOL_RISK_MAP = {
   // Critical Risk Tools
   softDeleteChannel: RISK_LEVELS.CRITICAL,
   restoreDeletedChannel: RISK_LEVELS.CRITICAL,
+  emptyTrashCategory: RISK_LEVELS.CRITICAL,
   softDeleteRole: RISK_LEVELS.CRITICAL,
   restoreRole: RISK_LEVELS.CRITICAL,
   quarantineMember: RISK_LEVELS.CRITICAL,
@@ -70,7 +72,12 @@ const RISK_COLORS = {
 /**
  * Lấy mức độ rủi ro của 1 tool cụ thể
  */
-function getToolRisk(toolName) {
+function getToolRisk(toolName, args = {}) {
+  // Nếu xóa tin nhắn trên 5 tin -> Bắt buộc là CRITICAL
+  if (toolName === 'smartPurgeMessages') {
+    const amount = Number(args.amount) || 0;
+    return amount > 5 ? RISK_LEVELS.CRITICAL : RISK_LEVELS.MEDIUM;
+  }
   return TOOL_RISK_MAP[toolName] || RISK_LEVELS.MEDIUM;
 }
 
@@ -86,7 +93,7 @@ function calculatePlanRisk(actions = []) {
   let allReadOnly = true;
 
   for (const action of actions) {
-    const risk = getToolRisk(action.toolName);
+    const risk = getToolRisk(action.toolName, action.args);
     if (risk !== RISK_LEVELS.READ_ONLY) {
       allReadOnly = false;
     }
