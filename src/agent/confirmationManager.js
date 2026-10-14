@@ -20,11 +20,11 @@ const rollbackEngine = require('./rollbackEngine');
 const inFlightPlans = new Set();
 
 // 1. Gửi Embed Hỏi Lại khi câu lệnh còn mơ hồ hoặc thiếu dữ liệu (Clarification Step)
-async function sendClarificationEmbed(message, prompt, questions = []) {
+async function sendClarificationEmbed(target, prompt, questions = []) {
   const embed = new EmbedBuilder()
     .setColor(0x3498DB)
     .setTitle('❓ Quản Gia Cần Thêm Thông Tin')
-    .setDescription(`Tôi đã nhận được yêu cầu của Sếp: *"**${prompt}**"*\nTuy nhiên, để đảm bảo an toàn tuyệt đối, Sếp vui lòng làm rõ các điểm sau:`)
+    .setDescription(`Tôi đã nhận được yêu cầu: "*${prompt}*"\nTuy nhiên, để đảm bảo an toàn, bạn vui lòng làm rõ các điểm sau:`)
     .addFields(
       questions.map((q, idx) => ({
         name: `🔹 Điểm cần làm rõ #${idx + 1}`,
@@ -32,31 +32,40 @@ async function sendClarificationEmbed(message, prompt, questions = []) {
         inline: false
       }))
     )
-    .setFooter({ text: 'Sếp chỉ cần gõ tin nhắn trả lời bổ sung tại kênh này!' })
+    .setFooter({ text: 'Bạn chỉ cần gõ tin nhắn trả lời bổ sung tại kênh này' })
     .setTimestamp();
 
-  return await message.reply({ embeds: [embed] });
+  if (target.reply) {
+    return await target.reply({ embeds: [embed] });
+  }
+  return await target.send({ embeds: [embed] });
 }
 
 // 2. Tối ưu trải nghiệm: Xử lý ngay lập tức các lệnh READ_ONLY (không làm thay đổi server)
-async function handleReadOnlyPlan(message, plan) {
-  const processingMsg = await message.reply({
-    content: '🔍 Đang tra cứu thông tin server theo yêu cầu của Sếp...'
-  });
+async function handleReadOnlyPlan(target, plan) {
+  const sendTarget = target.reply ? target : target;
+  let processingMsg = null;
+  if (target.reply) {
+    processingMsg = await target.reply({ content: '🔍 Đang tra cứu thông tin server...' });
+  } else {
+    processingMsg = await target.send({ content: '🔍 Đang tra cứu thông tin server...' });
+  }
+
+  const guild = target.guild;
 
   try {
     const { executeTool } = require('./tools');
     const results = [];
 
     for (const action of plan.actions) {
-      const res = await executeTool(message.guild, action.toolName, action.args);
+      const res = await executeTool(guild, action.toolName, action.args);
       results.push({ toolName: action.toolName, result: res });
     }
 
     const embed = new EmbedBuilder()
       .setColor(0x3498DB)
       .setTitle('📊 KẾT QUẢ TRA CỨU TỪ QUẢN GIA')
-      .setDescription(`Hoàn tất tra cứu cho yêu cầu: *"**${plan.prompt}**"*`)
+      .setDescription(`Hoàn tất tra cứu cho yêu cầu: "*${plan.prompt}*"`)
       .setTimestamp();
 
     for (const item of results) {
@@ -73,7 +82,7 @@ async function handleReadOnlyPlan(message, plan) {
       } else if (item.toolName === 'inspectPruneCount') {
         embed.addFields({ 
           name: '👥 Thành Viên Inactive', 
-          value: `Có **${item.result.inactiveMemberCount}** thành viên không hoạt động trong ${item.result.days} ngày qua.` 
+          value: `Có ${item.result.inactiveMemberCount} thành viên không hoạt động trong ${item.result.days} ngày qua.` 
         });
       } else if (item.toolName === 'auditServerPermissions') {
         const { exposedChannels = [], sensitiveRoles = [] } = item.result || {};
@@ -111,15 +120,18 @@ async function handleReadOnlyPlan(message, plan) {
         const { channel = {}, everyoneStatus = {}, allowedRoles = [], deniedRoles = [], adminRoles = [] } = item.result || {};
 
         embed.setTitle(`🔒 BÁO CÁO QUYỀN TRUY CẬP KÊNH #${channel.name || 'UNKNOWN'}`);
-        embed.setDescription(`Thông tin quyền xem và nhắn tin của kênh <#${channel.id}> (\`${channel.id}\`)`);
+        embed.setDescription(`Quyền truy cập thực tế của kênh <#${channel.id}> (\`${channel.id}\`)`);
 
         const everyoneDesc = everyoneStatus.canView 
           ? '🌐 **@everyone:** `✅ Được Xem Kênh`' + (everyoneStatus.canSend ? ' • `✅ Được Nhắn Tin`' : ' • `❌ Bị Chặn Nhắn Tin`')
           : '🔒 **@everyone:** `❌ BỊ CHẶN XEM KÊNH (Kênh Kín)`';
-        embed.addFields({ name: '1. Trạng Thái Của @everyone', value: everyoneDesc });
+        embed.addFields({ name: '1. Trạng Thái Hiệu Dụng Của @everyone', value: everyoneDesc });
 
         if (allowedRoles.length > 0) {
-          const roleList = allowedRoles.map(r => `• <@&${r.id}>: \`${r.permissions.join(', ')}\``).join('\n');
+          const roleList = allowedRoles.map(r => {
+            const eff = r.effective ? `[Xem: ${r.effective.canView ? '✅' : '❌'}, Chat: ${r.effective.canSend ? '✅' : '❌'}]` : '';
+            return `• <@&${r.id}>: \`${r.permissions.join(', ')}\` ${eff}`;
+          }).join('\n');
           embed.addFields({ name: `2. Các Role Được Cấp Quyền Riêng (${allowedRoles.length})`, value: roleList.slice(0, 1024) });
         } else {
           embed.addFields({ name: '2. Các Role Được Cấp Quyền Riêng', value: 'Không có Role nào được cấp quyền ghi đè.' });
@@ -149,12 +161,16 @@ async function handleReadOnlyPlan(message, plan) {
 }
 
 // 3. Xuất Bản Nháp Kế Hoạch (Dry-Run Preview Embed) & Reaction Collector mở khóa
-async function sendPlanPreviewEmbed(message, plan) {
+async function sendPlanPreviewEmbed(target, plan, author = null) {
   const planId = `PLAN-${Date.now().toString(36).toUpperCase()}`;
+  const guild = target.guild;
+  const adminId = author ? author.id : (target.author ? target.author.id : (target.user ? target.user.id : 'ADMIN'));
+  const channelId = target.channel ? target.channel.id : target.id;
+
   plan.planId = planId;
-  plan.guildId = message.guild.id;
-  plan.adminId = message.author.id;
-  plan.channelId = message.channel.id;
+  plan.guildId = guild.id;
+  plan.adminId = adminId;
+  plan.channelId = channelId;
   plan.expiresAt = new Date(Date.now() + 90 * 1000); // Tự hủy sau 90 giây
 
   await savePendingPlan(plan);
@@ -171,13 +187,13 @@ async function sendPlanPreviewEmbed(message, plan) {
 
   const embed = new EmbedBuilder()
     .setColor(embedColor)
-    .setTitle('🛡️ BẢNG KẾ HOẠCH THỰC THI - CHỜ ADMIN PHÊ DUYỆT')
-    .setDescription(`**Mục tiêu của Sếp:** *"**${plan.prompt}**"*\n\n**Mức độ rủi ro:** \`${plan.riskLevel}\`\n**Hỗ trợ Rollback:** \`✅ 100% An Toàn\``)
+    .setTitle('🛡️ BẢNG KẾ HOẠCH THỰC THI - CHỜ PHÊ DUYỆT')
+    .setDescription(`Mục tiêu: "*${plan.prompt}*"\n\nMức độ rủi ro: \`${plan.riskLevel}\` • Hỗ trợ Rollback: Có`)
     .addFields(
       { name: '📋 Chi Tiết Từng Bước Sẽ Chạy', value: stepsText.slice(0, 1024) },
       { 
         name: '🔐 Quy Trình Mở Khóa An Toàn (Zero-Trust)', 
-        value: 'Để chống bấm nhầm, **Sếp hãy thả cảm xúc `🔐` vào tin nhắn này** để mở khóa nút thực thi bên dưới!' 
+        value: 'Để chống bấm nhầm, bạn hãy thả cảm xúc `🔐` vào tin nhắn này để mở khóa nút thực thi bên dưới!' 
       }
     )
     .setFooter({ text: `Plan ID: ${planId} • Tự hủy sau 90 giây nếu không xác nhận` })
@@ -204,15 +220,23 @@ async function sendPlanPreviewEmbed(message, plan) {
       .setStyle(ButtonStyle.Danger)
   );
 
-  const previewMessage = await message.reply({
-    embeds: [embed],
-    components: [row]
-  });
+  let previewMessage = null;
+  if (target.reply) {
+    previewMessage = await target.reply({
+      embeds: [embed],
+      components: [row]
+    });
+  } else {
+    previewMessage = await target.send({
+      embeds: [embed],
+      components: [row]
+    });
+  }
 
   plan.messageId = previewMessage.id;
   await savePendingPlan(plan);
 
-  // Bot tự thả sẵn 2 reaction 🔐 và ❌ để Sếp bấm nhanh 1-Click
+  // Bot tự thả sẵn 2 reaction 🔐 và ❌ để người dùng bấm nhanh 1-Click
   await previewMessage.react('🔐').catch(() => {});
   await previewMessage.react('❌').catch(() => {});
 
@@ -222,7 +246,7 @@ async function sendPlanPreviewEmbed(message, plan) {
     if (p) {
       await deletePendingPlan(planId);
       await previewMessage.edit({
-        content: '⏳ **Kế hoạch đã hết hạn 90 giây và tự động hủy bỏ an toàn.**',
+        content: '⏳ Kế hoạch đã hết hạn 90 giây và tự động hủy bỏ an toàn.',
         components: []
       }).catch(() => {});
     }
@@ -236,19 +260,35 @@ async function handleButlerInteraction(interaction) {
   // Kiểm tra quyền Admin tối cao
   if (!OWNER_ADMIN_IDS.includes(interaction.user.id)) {
     return interaction.reply({
-      content: '🚫 **TRUY CẬP BỊ TỪ CHỐI:** Bạn không có quyền tương tác với bảng điều khiển Quản gia!',
+      content: '🚫 TRUY CẬP BỊ TỪ CHỐI: Bạn không có quyền tương tác với bảng điều khiển Quản gia!',
       ephemeral: true
     });
   }
 
   const [, action, planId] = interaction.customId.split('_');
 
-  // --- NÚT CHỈNH SỬA ---
+  // --- NÚT CHỈNH SỬA (Mở Modal nhập yêu cầu) ---
   if (action === 'edit') {
-    return interaction.reply({
-      content: '✏️ **Sếp chỉ cần gõ lại yêu cầu mới với các điều chỉnh mong muốn ngay tại kênh này nhé!** Quản gia sẽ lập tức lập bảng kế hoạch mới.',
-      ephemeral: true
-    });
+    const plan = await getPendingPlan(planId);
+    if (!plan) {
+      return interaction.reply({ content: '❌ Kế hoạch đã hết hạn hoặc không tìm thấy.', ephemeral: true });
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`butler_editmodal_${planId}`)
+      .setTitle('Chỉnh Sửa Kế Hoạch Quản Gia');
+
+    const editInput = new TextInputBuilder()
+      .setCustomId('edit_requirements')
+      .setLabel('Nhập yêu cầu sửa đổi / bổ sung:')
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('Ví dụ: Thêm bước khóa quyền xem của @everyone...')
+      .setRequired(true)
+      .setMinLength(2)
+      .setMaxLength(500);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(editInput));
+    return interaction.showModal(modal);
   }
 
   // --- NÚT HỦY BỎ ---
@@ -380,6 +420,33 @@ async function handleButlerInteraction(interaction) {
 
 // 5. Xử lý Modal Submit
 async function handleButlerModalSubmit(interaction) {
+  // Xử lý Modal Chỉnh sửa yêu cầu
+  if (interaction.customId.startsWith('butler_editmodal_')) {
+    const planId = interaction.customId.replace('butler_editmodal_', '');
+    const plan = await getPendingPlan(planId);
+    if (!plan) {
+      return interaction.reply({ content: '❌ Kế hoạch đã hết hạn hoặc không tìm thấy.', ephemeral: true });
+    }
+
+    const editFeedback = interaction.fields.getTextInputValue('edit_requirements');
+    await deletePendingPlan(planId);
+
+    await interaction.deferReply();
+
+    const combinedPrompt = `${plan.prompt} (Yêu cầu chỉnh sửa: ${editFeedback.trim()})`;
+
+    const { processAdminPrompt } = require('./agentController');
+    return await processAdminPrompt({
+      guild: interaction.guild,
+      channel: interaction.channel,
+      author: interaction.user,
+      prompt: combinedPrompt,
+      replyTarget: interaction,
+      isInteraction: true
+    });
+  }
+
+  // Xử lý Modal Xác nhận Tác vụ Rủi ro cao
   if (!interaction.customId.startsWith('butler_modal_')) return false;
 
   const planId = interaction.customId.replace('butler_modal_', '');
@@ -396,7 +463,7 @@ async function handleButlerModalSubmit(interaction) {
   const input = interaction.fields.getTextInputValue('confirm_text');
   if (input.trim() !== 'XAC NHAN') {
     return interaction.reply({
-      content: '❌ Bạn chưa gõ đúng chữ **XAC NHAN**. Tác vụ rủi ro cao đã bị hủy để đảm bảo an toàn!',
+      content: '❌ Bạn chưa gõ đúng chữ XAC NHAN. Tác vụ rủi ro cao đã bị hủy để đảm bảo an toàn!',
       ephemeral: true
     });
   }
@@ -414,7 +481,7 @@ async function runExecutionWorkflow(interaction, plan) {
   const statusEmbed = new EmbedBuilder()
     .setColor(0xF1C40F)
     .setTitle('⚙️ QUẢN GIA ĐANG THỰC THI KẾ HOẠCH...')
-    .setDescription(`Đang xử lý: *"**${plan.prompt}**"*\n\n⏳ Chuẩn bị chạy ${plan.actions.length} bước...`)
+    .setDescription(`Đang xử lý: "*${plan.prompt}*"\n\n⏳ Chuẩn bị chạy ${plan.actions.length} bước...`)
     .setTimestamp();
 
   try {
@@ -435,7 +502,7 @@ async function runExecutionWorkflow(interaction, plan) {
 
     const onProgress = async (step, total, toolName) => {
       statusEmbed.setDescription(
-        `Đang xử lý: *"**${plan.prompt}**"*\n\n⏳ **Đang chạy bước ${step}/${total}:** \`${toolName}\`...`
+        `Đang xử lý: "*${plan.prompt}*"\n\n⏳ Đang chạy bước ${step}/${total}: \`${toolName}\`...`
       );
       if (statusMsg) await statusMsg.edit({ embeds: [statusEmbed] }).catch(() => {});
     };
@@ -445,7 +512,7 @@ async function runExecutionWorkflow(interaction, plan) {
     if (execResult.aborted) {
       if (statusMsg) {
         await statusMsg.edit({
-          content: `🛑 **ĐÃ DỪNG KHẨN CẤP VÀ HOÀN TÁC THÀNH CÔNG!**\nTransaction: \`${execResult.transactionId}\``,
+          content: `🛑 Đã dừng khẩn cấp và hoàn tác thành công!\nTransaction: \`${execResult.transactionId}\``,
           embeds: [],
           components: []
         });
@@ -457,10 +524,10 @@ async function runExecutionWorkflow(interaction, plan) {
     const doneEmbed = new EmbedBuilder()
       .setColor(0x2ECC71)
       .setTitle('✅ THỰC THI HOÀN TẤT THÀNH CÔNG!')
-      .setDescription(`Toàn bộ **${execResult.totalSteps} bước** đã được thực thi chuẩn xác theo yêu cầu của Sếp!`)
+      .setDescription(`Toàn bộ ${execResult.totalSteps} bước đã được thực thi chuẩn xác theo yêu cầu của bạn!`)
       .addFields(
         { name: '🏷️ Transaction ID', value: `\`${execResult.transactionId}\``, inline: true },
-        { name: '🛡️ Bảo Hiểm Hoàn Tác', value: 'Sếp có thể bấm nút Hoàn tác bên dưới để phục hồi bất cứ lúc nào.', inline: true }
+        { name: '🛡️ Bảo Hiểm Hoàn Tác', value: 'Bạn có thể bấm nút Hoàn tác bên dưới để phục hồi bất cứ lúc nào.', inline: true }
       )
       .setTimestamp();
 

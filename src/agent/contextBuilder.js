@@ -69,6 +69,25 @@ async function buildServerContext(guild) {
       }))
       .slice(0, 50); // Giới hạn 50 role cao nhất để tiết kiệm token
 
+    // 4. Tạo chuỗi Compact Line Format tiết kiệm 60-70% Token
+    const compactLines = [
+      `[SERVER]: ${guild.name} (ID: ${guild.id}, Members: ${guild.memberCount}, OwnerId: ${guild.ownerId}, EveryoneRoleId: ${guild.id})`,
+      '',
+      `[CATEGORIES (${categories.length})]:`,
+      ...categories.map(c => `• ${c.name} [ID: ${c.id}, pos: ${c.position}]`),
+      '',
+      `[TEXT & ANNOUNCEMENT CHANNELS (${textChannels.length})]:`,
+      ...textChannels.map(c => `• #${c.name} [ID: ${c.id}, Cat: ${c.categoryName || 'None'}${c.topic ? `, Topic: "${c.topic.slice(0, 50)}"` : ''}]`),
+      '',
+      `[VOICE & STAGE CHANNELS (${voiceChannels.length})]:`,
+      ...voiceChannels.map(c => `• 🔊 ${c.name} [ID: ${c.id}, Cat: ${c.categoryName || 'None'}]`),
+      '',
+      `[ROLES (${roles.length})]:`,
+      ...roles.map(r => `• @${r.name} [ID: ${r.id}, pos: ${r.position}${r.isAdmin ? ', Admin: YES' : ''}${r.isEveryone ? ', EveryoneRole: YES' : ''}]`)
+    ];
+
+    const compactText = compactLines.join('\n');
+
     return {
       guild: {
         id: guild.id,
@@ -83,15 +102,17 @@ async function buildServerContext(guild) {
         voice: voiceChannels,
         others: otherChannels
       },
-      roles
+      roles,
+      compactText
     };
   } catch (err) {
     console.error('Lỗi khi xây dựng Server Context:', err.message);
     return {
-      guild: { id: guild.id, name: guild.name },
+      guild: { id: guild.id, name: guild.name, everyoneRoleId: guild.id },
       categories: [],
       channels: { text: [], voice: [], others: [] },
-      roles: []
+      roles: [],
+      compactText: `[SERVER]: ${guild.name} (ID: ${guild.id})`
     };
   }
 }

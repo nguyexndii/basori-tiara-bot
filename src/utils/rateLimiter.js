@@ -32,4 +32,10 @@ function checkCooldown(commandName, userId, cooldownSeconds = 3) {
   return null;
 }
 
-module.exports = { checkCooldown };
+/**
+ * Hàm tạm dừng bất đồng bộ (delay)
+ * @param {number} ms Số mili-giây cần chờ
+ */
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+module.exports = { checkCooldown, sleep };

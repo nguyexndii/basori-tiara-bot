@@ -80,7 +80,7 @@ module.exports = {
           if (f.name.includes('Quy Trình Mở Khóa') || f.name.includes('Mở Khóa')) {
             return {
               name: '🔓 Đã Mở Khóa An Toàn!',
-              value: `✅ Xác nhận bởi **${user.username}**. Sếp hãy bấm nút **[🟢 XÁC NHẬN THỰC THI NGAY]** bên dưới!`
+              value: `✅ Xác nhận bởi ${user.username}. Bạn hãy bấm nút [🟢 XÁC NHẬN THỰC THI NGAY] bên dưới!`
             };
           }
           return f;
@@ -96,7 +96,7 @@ module.exports = {
     else if (emojiName === '❌') {
       await deletePendingPlan(planId);
       await message.edit({
-        content: '🔴 **Kế hoạch đã bị Hủy bỏ theo yêu cầu của Sếp!**',
+        content: '🔴 Kế hoạch đã bị Hủy bỏ theo yêu cầu của bạn!',
         embeds: [],
         components: []
       }).catch(() => {});

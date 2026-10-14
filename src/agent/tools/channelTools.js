@@ -391,11 +391,14 @@ async function inspectChannelPermissions(guild, args) {
   const ch = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
   if (!ch) throw new Error(`Không tìm thấy kênh có ID '${channelId}' trong máy chủ!`);
 
+  // Tính quyền hiệu dụng thực tế của @everyone
   const everyoneRole = guild.roles.everyone;
   const everyonePerms = ch.permissionsFor(everyoneRole);
   const everyoneStatus = {
     canView: everyonePerms ? everyonePerms.has(PermissionFlagsBits.ViewChannel) : false,
-    canSend: everyonePerms ? everyonePerms.has(PermissionFlagsBits.SendMessages) : false
+    canSend: everyonePerms ? everyonePerms.has(PermissionFlagsBits.SendMessages) : false,
+    canConnect: everyonePerms ? everyonePerms.has(PermissionFlagsBits.Connect) : false,
+    canManage: everyonePerms ? everyonePerms.has(PermissionFlagsBits.ManageChannels) : false
   };
 
   const allowedRoles = [];
@@ -413,24 +416,43 @@ async function inspectChannelPermissions(guild, args) {
       const denies = [];
       if (ow.allow.has(PermissionFlagsBits.ViewChannel)) allows.push('Xem Kênh');
       if (ow.allow.has(PermissionFlagsBits.SendMessages)) allows.push('Gửi Tin Nhắn');
+      if (ow.allow.has(PermissionFlagsBits.Connect)) allows.push('Kết Nối Thoại');
+      if (ow.allow.has(PermissionFlagsBits.ManageChannels)) allows.push('Quản Lý Kênh');
+
       if (ow.deny.has(PermissionFlagsBits.ViewChannel)) denies.push('Chặn Xem');
       if (ow.deny.has(PermissionFlagsBits.SendMessages)) denies.push('Chặn Gửi Tin');
+      if (ow.deny.has(PermissionFlagsBits.Connect)) denies.push('Chặn Kết Nối');
+      if (ow.deny.has(PermissionFlagsBits.ManageChannels)) denies.push('Chặn Quản Lý');
 
-      if (allows.length > 0) allowedRoles.push({ id: role.id, name: role.name, permissions: allows });
-      if (denies.length > 0) deniedRoles.push({ id: role.id, name: role.name, permissions: denies });
+      // Tính quyền hiệu dụng cuối cùng sau khi Discord giải quyết thứ tự ưu tiên
+      const effectivePerms = ch.permissionsFor(role);
+      const effective = {
+        canView: effectivePerms ? effectivePerms.has(PermissionFlagsBits.ViewChannel) : false,
+        canSend: effectivePerms ? effectivePerms.has(PermissionFlagsBits.SendMessages) : false,
+        canConnect: effectivePerms ? effectivePerms.has(PermissionFlagsBits.Connect) : false,
+        canManage: effectivePerms ? effectivePerms.has(PermissionFlagsBits.ManageChannels) : false
+      };
+
+      if (allows.length > 0) allowedRoles.push({ id: role.id, name: role.name, permissions: allows, effective });
+      if (denies.length > 0) deniedRoles.push({ id: role.id, name: role.name, permissions: denies, effective });
     } else if (ow.type === 1) {
       const allows = [];
       const denies = [];
       if (ow.allow.has(PermissionFlagsBits.ViewChannel)) allows.push('Xem Kênh');
       if (ow.allow.has(PermissionFlagsBits.SendMessages)) allows.push('Gửi Tin Nhắn');
+      if (ow.allow.has(PermissionFlagsBits.Connect)) allows.push('Kết Nối Thoại');
+      if (ow.allow.has(PermissionFlagsBits.ManageChannels)) allows.push('Quản Lý Kênh');
+
       if (ow.deny.has(PermissionFlagsBits.ViewChannel)) denies.push('Chặn Xem');
       if (ow.deny.has(PermissionFlagsBits.SendMessages)) denies.push('Chặn Gửi Tin');
+      if (ow.deny.has(PermissionFlagsBits.Connect)) denies.push('Chặn Kết Nối');
+      if (ow.deny.has(PermissionFlagsBits.ManageChannels)) denies.push('Chặn Quản Lý');
 
       memberOverwrites.push({ userId: ow.id, allows, denies });
     }
   });
 
-  // Tìm thêm các Role có Administrator (vì Admin mặc định luôn xem được mọi kênh)
+  // Tìm thêm các Role có Administrator (mặc định luôn xem được mọi kênh)
   const adminRoles = guild.roles.cache
     .filter(r => r.permissions.has(PermissionFlagsBits.Administrator) && !r.managed)
     .map(r => ({ id: r.id, name: r.name }));

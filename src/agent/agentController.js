@@ -56,9 +56,9 @@ ID kênh: ${currentChId}
 ${conversationHistory.length > 0 ? conversationHistory.join('\n') : 'Chưa có lịch sử trước đó.'}
 ==============================================
 
-=== CẤU TRÚC SERVER HIỆN TẠI ===
-${JSON.stringify(serverContext, null, 2)}
-================================
+=== CẤU TRÚC SERVER HIỆN TẠI (COMPACT) ===
+${serverContext.compactText || JSON.stringify(serverContext, null, 2)}
+==========================================
 
 === NGUYÊN TẮC HÀNH XỬ QUAN TRỌNG NHẤT (ƯU TIÊN HÀNH ĐỘNG) ===
 1. KHI NGƯỜI DÙNG HỎI VỀ QUYỀN TRUY CẬP / QUYỀN XEM KÊNH:
@@ -82,48 +82,77 @@ ${JSON.stringify(serverContext, null, 2)}
 }
 
 /**
- * Xử lý tin nhắn Admin Prompt từ kênh quản trị
- * @param {import('discord.js').Message} message 
+ * Xử lý yêu cầu Admin Prompt lõi (nhận từ Message hoặc Modal Submit)
  */
-async function handleAdminPrompt(message) {
-  const prompt = message.content.trim();
-  if (!prompt) return;
+async function processAdminPrompt({ guild, channel, author, prompt, replyTarget, isInteraction = false }) {
+  if (!prompt || !prompt.trim()) return;
 
-  const thinkingMsg = await message.reply({
-    content: '⏳ Đang phân tích yêu cầu...'
-  });
+  let thinkingMsg = null;
+  if (!isInteraction) {
+    thinkingMsg = await replyTarget.reply({
+      content: '⏳ Đang phân tích yêu cầu...'
+    });
+  }
 
   try {
     // 1. Quét ngữ cảnh server hiện tại
-    const serverContext = await buildServerContext(message.guild);
+    const serverContext = await buildServerContext(guild);
 
     // 2. Thu thập lịch sử trò chuyện gần nhất trong kênh (Chat Memory)
-    const recentMessages = await message.channel.messages.fetch({ limit: 10 }).catch(() => null);
+    const recentMessages = await channel.messages.fetch({ limit: 15 }).catch(() => null);
     const conversationHistory = [];
     if (recentMessages && recentMessages.size > 0) {
       const sorted = Array.from(recentMessages.values())
-        .filter(m => m.id !== message.id)
-        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-        .slice(-6);
+        .filter(m => !isInteraction || (replyTarget && m.id !== replyTarget.id))
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-      for (const m of sorted) {
-        if (m.author.id === message.author.id) {
+      // Tìm mốc reset gần nhất (!butler-clear, !reset hoặc tin nhắn bot quét dọn)
+      let startIndex = 0;
+      for (let i = 0; i < sorted.length; i++) {
+        const m = sorted[i];
+        const content = (m.content || '').trim();
+        if (
+          content === '!butler-clear' ||
+          content === '!reset' ||
+          content.includes('🧹 Đã làm mới bộ nhớ ngữ cảnh Quản Gia')
+        ) {
+          startIndex = i + 1;
+        }
+      }
+
+      const activeMessages = sorted.slice(startIndex).slice(-10);
+
+      for (const m of activeMessages) {
+        if (m.author.id === author.id) {
           const text = m.content ? m.content.trim() : '';
-          if (text) conversationHistory.push(`Admin: "${text}"`);
+          if (text && !text.startsWith('!butler-') && !text.startsWith('!reset')) {
+            conversationHistory.push(`Admin: "${text}"`);
+          }
         } else if (m.author.bot) {
-          if (m.embeds && m.embeds[0]) {
-            const title = m.embeds[0].title || '';
-            const desc = m.embeds[0].description || '';
-            conversationHistory.push(`Bot: [${title}: ${desc.slice(0, 100)}]`);
+          if (m.embeds && m.embeds.length > 0) {
+            const embedParts = [];
+            for (const emb of m.embeds) {
+              const parts = [];
+              if (emb.title) parts.push(`Tiêu đề: ${emb.title}`);
+              if (emb.description) parts.push(`Nội dung: ${emb.description}`);
+              if (emb.fields && emb.fields.length > 0) {
+                const fieldsText = emb.fields.map(f => `${f.name}: ${f.value}`).join(' | ');
+                parts.push(`Chi tiết: [${fieldsText}]`);
+              }
+              if (parts.length > 0) embedParts.push(parts.join(' - '));
+            }
+            if (embedParts.length > 0) {
+              conversationHistory.push(`Bot [Embed]: ${embedParts.join('\n')}`);
+            }
           } else if (m.content) {
-            conversationHistory.push(`Bot: "${m.content.slice(0, 100)}"`);
+            conversationHistory.push(`Bot: "${m.content.slice(0, 300)}"`);
           }
         }
       }
     }
 
     // 3. Chuẩn bị prompt và gọi Gemini
-    const systemInstruction = buildSystemInstruction(serverContext, message.channel, conversationHistory);
+    const systemInstruction = buildSystemInstruction(serverContext, channel, conversationHistory);
     const geminiResult = await callGeminiWithCascade({
       contents: prompt,
       systemInstruction,
@@ -133,23 +162,32 @@ async function handleAdminPrompt(message) {
     const response = geminiResult.response;
     const functionCalls = response.functionCalls || [];
 
-    // Xóa tin nhắn "đang phân tích"
-    await thinkingMsg.delete().catch(() => {});
+    // Dọn tin nhắn "đang phân tích"
+    if (thinkingMsg) {
+      await thinkingMsg.delete().catch(() => {});
+    }
 
     // 4. Phân tích kết quả trả về từ AI
     if (!functionCalls || functionCalls.length === 0) {
       const textReply = response.text || 'Tôi đã ghi nhận nhưng chưa tìm thấy thao tác kỹ thuật phù hợp với yêu cầu này.';
-      return await message.reply({ content: textReply });
+      if (isInteraction) {
+        return await replyTarget.editReply({ content: textReply });
+      }
+      return await replyTarget.reply({ content: textReply });
     }
 
-    // 4. Nếu AI yêu cầu làm rõ (Clarification)
+    // 5. Nếu AI yêu cầu làm rõ (Clarification)
     const clarificationCall = functionCalls.find(fc => fc.name === 'request_clarification');
     if (clarificationCall) {
-      const questions = (clarificationCall.args && clarificationCall.args.questions) || ['Sếp có thể mô tả chi tiết hơn không?'];
-      return await sendClarificationEmbed(message, prompt, questions);
+      const questions = (clarificationCall.args && clarificationCall.args.questions) || ['Bạn có thể mô tả chi tiết hơn không?'];
+      if (isInteraction) {
+        await replyTarget.deleteReply().catch(() => {});
+        return await sendClarificationEmbed(channel, prompt, questions);
+      }
+      return await sendClarificationEmbed(replyTarget, prompt, questions);
     }
 
-    // 5. Nếu AI trả về chuỗi các hành động thực thi
+    // 6. Nếu AI trả về chuỗi các hành động thực thi
     const actions = functionCalls.map((fc, index) => ({
       stepIndex: index + 1,
       toolName: fc.name,
@@ -165,22 +203,53 @@ async function handleAdminPrompt(message) {
       modelUsed: geminiResult.modelUsed
     };
 
-    // 6. Kiểm tra Fast-track cho lệnh READ_ONLY
+    // 7. Fast-track cho lệnh READ_ONLY
     if (riskLevel === RISK_LEVELS.READ_ONLY) {
-      return await handleReadOnlyPlan(message, plan);
+      if (isInteraction) {
+        await replyTarget.deleteReply().catch(() => {});
+        return await handleReadOnlyPlan(channel, plan);
+      }
+      return await handleReadOnlyPlan(replyTarget, plan);
     }
 
-    // 7. Lệnh có thay đổi server (LOW, MEDIUM, CRITICAL) -> Đi qua Zero-Trust Preview
-    await sendPlanPreviewEmbed(message, plan);
+    // 8. Lệnh có thay đổi server -> Zero-Trust Preview
+    if (isInteraction) {
+      await replyTarget.deleteReply().catch(() => {});
+      return await sendPlanPreviewEmbed(channel, plan, author);
+    }
+    await sendPlanPreviewEmbed(replyTarget, plan, author);
 
   } catch (err) {
     console.error('❌ Lỗi xử lý Admin Prompt:', err);
-    await thinkingMsg.edit({
-      content: `❌ **Quản gia gặp sự cố khi xử lý yêu cầu:** ${err.message}`
-    }).catch(() => {});
+    if (isInteraction) {
+      return await replyTarget.editReply({
+        content: `❌ Quản gia gặp sự cố khi xử lý yêu cầu: ${err.message}`
+      }).catch(() => {});
+    }
+    if (thinkingMsg) {
+      await thinkingMsg.edit({
+        content: `❌ Quản gia gặp sự cố khi xử lý yêu cầu: ${err.message}`
+      }).catch(() => {});
+    }
   }
 }
 
+/**
+ * Xử lý tin nhắn Admin Prompt từ kênh quản trị
+ * @param {import('discord.js').Message} message 
+ */
+async function handleAdminPrompt(message) {
+  return await processAdminPrompt({
+    guild: message.guild,
+    channel: message.channel,
+    author: message.author,
+    prompt: message.content.trim(),
+    replyTarget: message,
+    isInteraction: false
+  });
+}
+
 module.exports = {
-  handleAdminPrompt
+  handleAdminPrompt,
+  processAdminPrompt
 };

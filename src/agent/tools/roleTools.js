@@ -246,6 +246,30 @@ async function setChannelPermissionOverwrites(guild, args) {
     ...denyObj
   });
 
+  // Tính quyền hiệu dụng thực tế cuối cùng của đối tượng trên kênh
+  let effective = null;
+  try {
+    const target = targetId === guild.id
+      ? guild.roles.everyone
+      : (targetType === 'member'
+          ? await guild.members.fetch(targetId).catch(() => null)
+          : await guild.roles.fetch(targetId).catch(() => null));
+
+    if (target) {
+      const p = channel.permissionsFor(target);
+      if (p) {
+        effective = {
+          canView: p.has(PermissionsBitField.Flags.ViewChannel),
+          canSend: p.has(PermissionsBitField.Flags.SendMessages),
+          canConnect: p.has(PermissionsBitField.Flags.Connect),
+          canManage: p.has(PermissionsBitField.Flags.ManageChannels)
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Lỗi tính quyền hiệu dụng sau khi setChannelPermissionOverwrites:', err.message);
+  }
+
   return {
     success: true,
     action: 'SET_CHANNEL_PERMISSIONS',
@@ -254,7 +278,7 @@ async function setChannelPermissionOverwrites(guild, args) {
     overwrittenTargetId: targetId,
     targetType,
     beforeState,
-    afterState: { allow, deny }
+    afterState: { allow, deny, effective }
   };
 }
 

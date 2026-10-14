@@ -125,8 +125,36 @@ async function executePlan(guild, plan, adminId, onProgressCallback) {
       // 2. Phân giải Dynamic Arguments ($STEP_N.id)
       const resolvedArgs = resolveDynamicArgs(action.args, stepResults, createdEntities);
 
-      // 3. Thực thi tool
-      const result = await executeTool(guild, action.toolName, resolvedArgs);
+      // 3. Thực thi tool với cơ chế bắt lỗi HTTP 429 (Rate Limit) và retry_after
+      let result = null;
+      let retryAttempts = 0;
+      const maxRetries = 3;
+
+      while (retryAttempts < maxRetries) {
+        try {
+          result = await executeTool(guild, action.toolName, resolvedArgs);
+          break;
+        } catch (toolErr) {
+          const retryAfterSec = toolErr.retry_after || 
+                                (toolErr.rawError && toolErr.rawError.retry_after) ||
+                                (toolErr.data && toolErr.data.retry_after);
+
+          const is429 = toolErr.status === 429 || 
+                        toolErr.code === 429 || 
+                        (toolErr.message && toolErr.message.includes('429')) ||
+                        Boolean(retryAfterSec);
+
+          if (is429 && retryAttempts < maxRetries - 1) {
+            retryAttempts++;
+            const waitMs = retryAfterSec ? Math.ceil(retryAfterSec * 1000) + 300 : 2000;
+            console.warn(`⚠️ [RATE LIMIT DISCORD 429] Bước ${stepNum} (${action.toolName}) bị giới hạn tần suất. Đợi ${waitMs}ms trước khi thử lại (Lần ${retryAttempts}/${maxRetries - 1})...`);
+            await sleep(waitMs);
+          } else {
+            throw toolErr;
+          }
+        }
+      }
+
       stepResults[stepNum] = result;
 
       // Lưu lại đối tượng vừa tạo để hỗ trợ các bước sau
@@ -149,8 +177,9 @@ async function executePlan(guild, plan, adminId, onProgressCallback) {
         reversible: true
       });
 
-      // Điều tiết tốc độ gọi API Discord chống 429
-      await sleep(350);
+      // Điều tiết tốc độ gọi API Discord chống 429: Tăng độ trễ an toàn nếu chuỗi trên 5 bước
+      const stepDelay = totalSteps > 5 ? 650 : 350;
+      await sleep(stepDelay);
     }
 
     // Hoàn tất 100%
