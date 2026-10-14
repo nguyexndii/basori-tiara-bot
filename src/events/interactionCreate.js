@@ -1,12 +1,34 @@
 // src/events/interactionCreate.js
-// Xử lý sự kiện khi có tương tác (Slash Commands) từ người dùng
+// Xử lý sự kiện khi có tương tác (Slash Commands, Butler Buttons & Modals)
 
 const { checkCooldown } = require('../utils/rateLimiter');
 const { logCommandUsage, logSystemError } = require('../utils/logger');
+const { handleButlerInteraction, handleButlerModalSubmit } = require('../agent/confirmationManager');
 
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction, client) {
+    // 1. Xử lý Modal Submit của Quản gia AI
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith('butler_')) {
+        return await handleButlerModalSubmit(interaction).catch(err => {
+          console.error('Lỗi xử lý Modal Quản gia:', err);
+        });
+      }
+      return;
+    }
+
+    // 2. Xử lý Button Click của Quản gia AI
+    if (interaction.isButton()) {
+      if (interaction.customId.startsWith('butler_')) {
+        return await handleButlerInteraction(interaction).catch(err => {
+          console.error('Lỗi xử lý Button Quản gia:', err);
+        });
+      }
+      return;
+    }
+
+    // 3. Xử lý Slash Commands thông thường
     if (!interaction.isChatInputCommand()) return;
 
     const command = client.commands.get(interaction.commandName);
@@ -15,7 +37,7 @@ module.exports = {
       return;
     }
 
-    // 1. Kiểm tra Cooldown (Rate Limiting)
+    // Kiểm tra Cooldown (Rate Limiting)
     const cooldownTime = command.cooldown || 3;
     const timeLeft = checkCooldown(interaction.commandName, interaction.user.id, cooldownTime);
     if (timeLeft !== null) {
@@ -25,7 +47,7 @@ module.exports = {
       });
     }
 
-    // 2. Kiểm tra phân quyền thời gian thực (Runtime Authorization Check)
+    // Kiểm tra phân quyền thời gian thực (Runtime Authorization Check)
     if (command.data.default_member_permissions && interaction.member) {
       const requiredPerms = BigInt(command.data.default_member_permissions);
       if (!interaction.member.permissions.has(requiredPerms)) {
@@ -36,10 +58,10 @@ module.exports = {
       }
     }
 
-    // 3. Ghi log gọi lệnh vào kênh chỉ định
+    // Ghi log gọi lệnh vào kênh chỉ định
     await logCommandUsage(client, interaction).catch(() => {});
 
-    // 4. Thực thi câu lệnh an toàn với try/catch
+    // Thực thi câu lệnh an toàn với try/catch
     try {
       await command.execute(interaction);
     } catch (error) {

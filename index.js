@@ -9,13 +9,16 @@ const { connectDatabase } = require('./src/database/mongoose');
 const { loadAllCommands } = require('./src/commands');
 const { logSystemError } = require('./src/utils/logger');
 
-// 1. Khởi tạo Client Discord với đầy đủ các Intents cần thiết
+// 1. Khởi tạo Client Discord với đầy đủ các Intents cần thiết cho Quản gia AI
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildEmojisAndStickers
   ]
 });
 
