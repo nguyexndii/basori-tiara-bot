@@ -156,12 +156,13 @@ async function sendPlanPreviewEmbed(message, plan) {
     .setFooter({ text: `Plan ID: ${planId} • Tự hủy sau 90 giây nếu không xác nhận` })
     .setTimestamp();
 
-  // 4 Nút bấm điều khiển (Nút Thực thi sẵn sàng 1-Click cho Admin tối cao)
+  // 4 Nút bấm điều khiển (Nút Thực thi ban đầu bị khóa, cần thả 🔐 để mở)
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`butler_execute_${planId}`)
-      .setLabel('🟢 Xác nhận Thực thi')
-      .setStyle(ButtonStyle.Success),
+      .setLabel('🔒 Thực thi Kế hoạch (Thả 🔐 để mở khóa)')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(true),
     new ButtonBuilder()
       .setCustomId(`butler_edit_${planId}`)
       .setLabel('✏️ Chỉnh sửa')
@@ -183,6 +184,10 @@ async function sendPlanPreviewEmbed(message, plan) {
 
   plan.messageId = previewMessage.id;
   await savePendingPlan(plan);
+
+  // Bot tự thả sẵn 2 reaction 🔐 và ❌ để Sếp bấm nhanh 1-Click
+  await previewMessage.react('🔐').catch(() => {});
+  await previewMessage.react('❌').catch(() => {});
 
   // Tự động hủy nếu không ai bấm trong 90 giây
   setTimeout(async () => {
