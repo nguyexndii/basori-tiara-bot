@@ -3,6 +3,7 @@
 
 const { REST, Routes, ActivityType } = require('discord.js');
 const { TOKEN, CLIENT_ID } = require('../config/env');
+const version = require('../config/version');
 const kaomojis = require('../config/kaomojis');
 const { logBotReady, logSystemError } = require('../utils/logger');
 
@@ -12,6 +13,7 @@ module.exports = {
   async execute(client) {
     console.log(`========================================`);
     console.log(`🤖 Bot đã đăng nhập thành công: ${client.user.tag}`);
+    console.log(`🏷️  Phiên bản: ${version.getFullVersion()}`);
     console.log(`🌐 Đang phục vụ ${client.guilds.cache.size} máy chủ.`);
 
     // 1. Khởi động tính năng xoay tua Kaomoji ngẫu nhiên mỗi 60 giây

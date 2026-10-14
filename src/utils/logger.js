@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { EmbedBuilder } = require('discord.js');
 const { LOG_CHANNEL_ID } = require('../config/ids');
+const version = require('../config/version');
 
 const logFilePath = path.join(__dirname, '..', '..', 'bot-error.log');
 
@@ -41,6 +42,7 @@ async function logBotReady(client) {
     .setTitle('🟢 Bot Đã Khởi Động Trực Tuyến')
     .setDescription(`**${client.user.tag}** đã kết nối thành công và sẵn sàng quản trị server!`)
     .addFields(
+      { name: '🏷️ Phiên bản (Build)', value: `\`${version.getFullVersion()}\``, inline: false },
       { name: '🌐 Máy chủ phục vụ', value: `${client.guilds.cache.size}`, inline: true },
       { name: '💓 WebSocket Ping', value: `${Math.round(client.ws.ping)}ms`, inline: true },
       { name: '📅 Thời gian', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }

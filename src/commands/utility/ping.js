@@ -1,5 +1,6 @@
 // src/commands/utility/ping.js
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const version = require('../../config/version');
 
 module.exports = {
   cooldown: 3,
@@ -19,7 +20,7 @@ module.exports = {
         { name: '📡 Độ trễ phản hồi (Roundtrip)', value: `\`${latency}ms\``, inline: true },
         { name: '💓 Độ trễ WebSocket (API)', value: `\`${apiPing}ms\``, inline: true }
       )
-      .setFooter({ text: 'Basori Tiara' })
+      .setFooter({ text: `Basori Tiara • ${version.getBuildBadge()}` })
       .setTimestamp();
 
     return interaction.editReply({ content: null, embeds: [embed] });
