@@ -34,42 +34,51 @@ const ALL_TOOLS = [CLARIFICATION_TOOL, ...functionDeclarations];
 /**
  * Tạo System Instruction huấn luyện tư duy Quản gia AI
  */
-function buildSystemInstruction(serverContext) {
+function buildSystemInstruction(serverContext, currentChannel, conversationHistory = []) {
   const everyoneRoleId = (serverContext.guild && serverContext.guild.everyoneRoleId) || 'everyone';
   const adminRole = (serverContext.roles || []).find(r => r.isAdmin && !r.isEveryone);
   const adminRoleId = adminRole ? adminRole.id : null;
+  const currentChName = currentChannel ? currentChannel.name : 'agent-demo';
+  const currentChId = currentChannel ? currentChannel.id : '1559786977040011284';
 
   return `Bạn là AI hỗ trợ quản trị kỹ thuật của máy chủ Discord Basori Tiara.
 GIAO TIẾP:
 - Ngắn gọn, súc tích, tự nhiên, đi thẳng vào trọng tâm.
 - TUYỆT ĐỐI KHÔNG dùng các từ ngữ hạ mình, nịnh bợ như: "Chủ Sở Hữu", "Ngài", "Sếp", "Dạ thưa", "em", "tuân lệnh".
-- Xưng "tôi" và gọi người dùng là "bạn", hoặc trả lời thẳng kết quả không cần xưng hô rườm rà.
+- Xưng "tôi" và gọi người dùng là "bạn", hoặc trả lời thẳng kết quả.
+
+=== KÊNH ADMIN ĐANG TRÒ CHUYỆN HIỆN TẠI ===
+Tên kênh: #${currentChName}
+ID kênh: ${currentChId}
+👉 KHI BẠN HOẶC NGƯỜI DÙNG NÓI "KÊNH NÀY": MẶC ĐỊNH CHÍNH LÀ KÊNH HIỆN TẠI CÓ ID '${currentChId}'!
+
+=== LỊCH SỬ HỘI THOẠI GẦN ĐÂY (CHAT MEMORY) ===
+${conversationHistory.length > 0 ? conversationHistory.join('\n') : 'Chưa có lịch sử trước đó.'}
+==============================================
 
 === CẤU TRÚC SERVER HIỆN TẠI ===
 ${JSON.stringify(serverContext, null, 2)}
 ================================
 
-=== NGUYÊN TẮC HÀNH XỬ QUAN TRỌNG NHẤT ===
-1. QUY TẮC ĐA TÁC VỤ (BẮT BUỘC KHÔNG BỎ SÓT BƯỚC):
-   - Khi Admin ra lệnh gồm nhiều hành động trong một câu:
-     Ví dụ: "Tạo danh mục X và kênh chat Y bên trong, chỉ cho Admin xem được"
-     👉 BẠN BẮT BUỘC PHẢI GỌI ĐỦ TẤT CẢ CÁC TOOLS TRONG 1 LẦN DUY NHẤT, TUYỆT ĐỐI KHÔNG ĐƯỢC CHỈ TẠO DANH MỤC MÀ BỎ QUÊN KÊNH CHAT CON VÀ PHÂN QUYỀN!
-     Chuỗi hành động chuẩn:
-     • Bước 1: createChannel({ name: 'X', type: 'category' })
-     • Bước 2: createChannel({ name: 'Y', type: 'text', parentId: '$STEP_1.id' })
+=== NGUYÊN TẮC HÀNH XỬ QUAN TRỌNG NHẤT (ƯU TIÊN HÀNH ĐỘNG) ===
+1. KHI NGƯỜI DÙNG HỎI VỀ QUYỀN TRUY CẬP / QUYỀN XEM KÊNH:
+   - Khi hỏi "kênh này ai có thể xem / chat?" hoặc nhắc đến ID kênh:
+     👉 GỌI NGAY CÔNG CỤ 'inspectChannelPermissions({ channelId: '${currentChId}' })' (hoặc ID kênh được nhắc đến).
+     👉 TUYỆT ĐỐI KHÔNG ĐƯỢC HỎI LẠI! Công cụ này sẽ tự động báo cáo tất cả từ @everyone, Role thường đến Admin.
+
+2. QUY TẮC BỘ NHỚ HỘI THOẠI (KHÔNG HỎI LẠI VÔ LÝ):
+   - Luôn đọc kỹ mục LỊCH SỬ HỘI THOẠI GẦN ĐÂY. Nếu ở các tin nhắn trước người dùng đã nói về kênh nào, hoặc bạn đã hỏi và người dùng vừa xác nhận (ví dụ "đúng rồi", "xem tổng quan"):
+     👉 HÃY THỰC HIỆN NGAY DỰA TRÊN NGỮ CẢNH CŨ, TUYỆT ĐỐI KHÔNG HỎI LẶP LẠI!
+
+3. QUY TẮC ĐA TÁC VỤ (KHÔNG BỎ SÓT BƯỚC):
+   - Khi người dùng yêu cầu tạo danh mục VÀ tạo kênh bên trong VÀ phân quyền kín:
+     👉 BẮT BUỘC TRẢ VỀ ĐỦ TẤT CẢ CÁC BƯỚC:
+     • Bước 1: createChannel({ name: 'Tên-Danh-Mục', type: 'category' })
+     • Bước 2: createChannel({ name: 'tên-kênh', type: 'text', parentId: '$STEP_1.id' })
      • Bước 3: setChannelPermissionOverwrites({ channelId: '$STEP_1.id', targetId: '${everyoneRoleId}', deny: ['ViewChannel'] })
      ${adminRoleId ? `• Bước 4: setChannelPermissionOverwrites({ channelId: '$STEP_1.id', targetId: '${adminRoleId}', allow: ['ViewChannel', 'SendMessages'] })` : ''}
 
-2. KHI PHÂN QUYỀN KÊNH KÍN HOẶC CHỈ ADMIN XEM:
-   - ID của role @everyone là '${everyoneRoleId}'. Luôn deny 'ViewChannel' đối với role này.
-   - Nếu Admin muốn cho role cụ thể xem: Tìm đúng ID của role đó trong CẤU TRÚC SERVER HIỆN TẠI để allow 'ViewChannel'.
-
-3. KHI LỆNH MƠ HỒ HOẶC THIẾU THÔNG SỐ:
-   - Nếu Admin nói chung chung mà chưa rõ ý định, hãy gọi công cụ 'request_clarification'.
-
-4. VỀ BẢO VỆ DỮ LIỆU:
-   - Khi Admin muốn xóa kênh: Gọi 'softDeleteChannel' (đưa vào thùng rác an toàn) chứ không được xóa vĩnh viễn.
-   - Khi muốn phạt thành viên nặng: Ưu tiên 'quarantineMember' (cách ly) hoặc 'timeoutMember'.`;
+4. CHỈ GỌI 'request_clarification' KHI THỰC SỰ MẤT PHƯƠNG HƯỚNG VÀ KHÔNG THỂ TRA CỨU ĐƯỢC.`;
 }
 
 /**
@@ -88,8 +97,33 @@ async function handleAdminPrompt(message) {
     // 1. Quét ngữ cảnh server hiện tại
     const serverContext = await buildServerContext(message.guild);
 
-    // 2. Chuẩn bị prompt và gọi Gemini
-    const systemInstruction = buildSystemInstruction(serverContext);
+    // 2. Thu thập lịch sử trò chuyện gần nhất trong kênh (Chat Memory)
+    const recentMessages = await message.channel.messages.fetch({ limit: 10 }).catch(() => null);
+    const conversationHistory = [];
+    if (recentMessages && recentMessages.size > 0) {
+      const sorted = Array.from(recentMessages.values())
+        .filter(m => m.id !== message.id)
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .slice(-6);
+
+      for (const m of sorted) {
+        if (m.author.id === message.author.id) {
+          const text = m.content ? m.content.trim() : '';
+          if (text) conversationHistory.push(`Admin: "${text}"`);
+        } else if (m.author.bot) {
+          if (m.embeds && m.embeds[0]) {
+            const title = m.embeds[0].title || '';
+            const desc = m.embeds[0].description || '';
+            conversationHistory.push(`Bot: [${title}: ${desc.slice(0, 100)}]`);
+          } else if (m.content) {
+            conversationHistory.push(`Bot: "${m.content.slice(0, 100)}"`);
+          }
+        }
+      }
+    }
+
+    // 3. Chuẩn bị prompt và gọi Gemini
+    const systemInstruction = buildSystemInstruction(serverContext, message.channel, conversationHistory);
     const geminiResult = await callGeminiWithCascade({
       contents: prompt,
       systemInstruction,
@@ -102,7 +136,7 @@ async function handleAdminPrompt(message) {
     // Xóa tin nhắn "đang phân tích"
     await thinkingMsg.delete().catch(() => {});
 
-    // 3. Phân tích kết quả trả về từ AI
+    // 4. Phân tích kết quả trả về từ AI
     if (!functionCalls || functionCalls.length === 0) {
       const textReply = response.text || 'Tôi đã ghi nhận nhưng chưa tìm thấy thao tác kỹ thuật phù hợp với yêu cầu này.';
       return await message.reply({ content: textReply });

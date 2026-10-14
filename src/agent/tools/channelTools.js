@@ -383,6 +383,70 @@ async function emptyTrashCategory(guild, args) {
   };
 }
 
+// 11. Kiểm tra chi tiết quyền xem và chat của 1 kênh cụ thể (READ_ONLY)
+async function inspectChannelPermissions(guild, args) {
+  const { channelId } = args;
+  if (!channelId) throw new Error('Vui lòng cung cấp ID của kênh cần kiểm tra!');
+
+  const ch = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+  if (!ch) throw new Error(`Không tìm thấy kênh có ID '${channelId}' trong máy chủ!`);
+
+  const everyoneRole = guild.roles.everyone;
+  const everyonePerms = ch.permissionsFor(everyoneRole);
+  const everyoneStatus = {
+    canView: everyonePerms ? everyonePerms.has(PermissionFlagsBits.ViewChannel) : false,
+    canSend: everyonePerms ? everyonePerms.has(PermissionFlagsBits.SendMessages) : false
+  };
+
+  const allowedRoles = [];
+  const deniedRoles = [];
+  const memberOverwrites = [];
+
+  ch.permissionOverwrites.cache.forEach(ow => {
+    // 0: Role, 1: Member
+    if (ow.type === 0) {
+      if (ow.id === guild.id) return; // Đã xử lý @everyone
+      const role = guild.roles.cache.get(ow.id);
+      if (!role) return;
+
+      const allows = [];
+      const denies = [];
+      if (ow.allow.has(PermissionFlagsBits.ViewChannel)) allows.push('Xem Kênh');
+      if (ow.allow.has(PermissionFlagsBits.SendMessages)) allows.push('Gửi Tin Nhắn');
+      if (ow.deny.has(PermissionFlagsBits.ViewChannel)) denies.push('Chặn Xem');
+      if (ow.deny.has(PermissionFlagsBits.SendMessages)) denies.push('Chặn Gửi Tin');
+
+      if (allows.length > 0) allowedRoles.push({ id: role.id, name: role.name, permissions: allows });
+      if (denies.length > 0) deniedRoles.push({ id: role.id, name: role.name, permissions: denies });
+    } else if (ow.type === 1) {
+      const allows = [];
+      const denies = [];
+      if (ow.allow.has(PermissionFlagsBits.ViewChannel)) allows.push('Xem Kênh');
+      if (ow.allow.has(PermissionFlagsBits.SendMessages)) allows.push('Gửi Tin Nhắn');
+      if (ow.deny.has(PermissionFlagsBits.ViewChannel)) denies.push('Chặn Xem');
+      if (ow.deny.has(PermissionFlagsBits.SendMessages)) denies.push('Chặn Gửi Tin');
+
+      memberOverwrites.push({ userId: ow.id, allows, denies });
+    }
+  });
+
+  // Tìm thêm các Role có Administrator (vì Admin mặc định luôn xem được mọi kênh)
+  const adminRoles = guild.roles.cache
+    .filter(r => r.permissions.has(PermissionFlagsBits.Administrator) && !r.managed)
+    .map(r => ({ id: r.id, name: r.name }));
+
+  return {
+    success: true,
+    action: 'INSPECT_CHANNEL_PERMISSIONS',
+    channel: { id: ch.id, name: ch.name, type: ch.type },
+    everyoneStatus,
+    allowedRoles,
+    deniedRoles,
+    adminRoles,
+    memberOverwrites
+  };
+}
+
 module.exports = {
   createChannel,
   modifyChannel,
@@ -393,5 +457,6 @@ module.exports = {
   lockOrUnlockChannels,
   manageThreads,
   manageWebhooks,
-  emptyTrashCategory
+  emptyTrashCategory,
+  inspectChannelPermissions
 };

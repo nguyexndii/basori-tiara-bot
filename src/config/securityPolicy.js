@@ -15,6 +15,7 @@ const TOOL_RISK_MAP = {
   summarizeChannelConversation: RISK_LEVELS.READ_ONLY,
   inspectPruneCount: RISK_LEVELS.READ_ONLY,
   auditServerPermissions: RISK_LEVELS.READ_ONLY,
+  inspectChannelPermissions: RISK_LEVELS.READ_ONLY,
 
   // Low Risk Tools
   createChannel: RISK_LEVELS.LOW,

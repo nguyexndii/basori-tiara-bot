@@ -107,6 +107,33 @@ async function handleReadOnlyPlan(message, plan) {
             value: '✅ An toàn: Không có vai trò thông thường nào sở hữu quyền nguy hiểm.' 
           });
         }
+      } else if (item.toolName === 'inspectChannelPermissions') {
+        const { channel = {}, everyoneStatus = {}, allowedRoles = [], deniedRoles = [], adminRoles = [] } = item.result || {};
+
+        embed.setTitle(`🔒 BÁO CÁO QUYỀN TRUY CẬP KÊNH #${channel.name || 'UNKNOWN'}`);
+        embed.setDescription(`Thông tin quyền xem và nhắn tin của kênh <#${channel.id}> (\`${channel.id}\`)`);
+
+        const everyoneDesc = everyoneStatus.canView 
+          ? '🌐 **@everyone:** `✅ Được Xem Kênh`' + (everyoneStatus.canSend ? ' • `✅ Được Nhắn Tin`' : ' • `❌ Bị Chặn Nhắn Tin`')
+          : '🔒 **@everyone:** `❌ BỊ CHẶN XEM KÊNH (Kênh Kín)`';
+        embed.addFields({ name: '1. Trạng Thái Của @everyone', value: everyoneDesc });
+
+        if (allowedRoles.length > 0) {
+          const roleList = allowedRoles.map(r => `• <@&${r.id}>: \`${r.permissions.join(', ')}\``).join('\n');
+          embed.addFields({ name: `2. Các Role Được Cấp Quyền Riêng (${allowedRoles.length})`, value: roleList.slice(0, 1024) });
+        } else {
+          embed.addFields({ name: '2. Các Role Được Cấp Quyền Riêng', value: 'Không có Role nào được cấp quyền ghi đè.' });
+        }
+
+        if (deniedRoles.length > 0) {
+          const deniedList = deniedRoles.map(r => `• <@&${r.id}>: \`${r.permissions.join(', ')}\``).join('\n');
+          embed.addFields({ name: `3. Các Role Bị Chặn Riêng (${deniedRoles.length})`, value: deniedList.slice(0, 1024) });
+        }
+
+        if (adminRoles.length > 0) {
+          const adminList = adminRoles.map(r => `<@&${r.id}>`).join(', ');
+          embed.addFields({ name: '4. Role Có Quyền Quản Trị Viên (Mặc định xem được)', value: adminList.slice(0, 1024) });
+        }
       } else {
         embed.addFields({
           name: `📌 Kết Quả: \`${item.toolName}\``,

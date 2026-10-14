@@ -95,6 +95,17 @@ const functionDeclarations = [
     }
   },
   {
+    name: 'inspectChannelPermissions',
+    description: 'Kiểm tra chi tiết xem những Role và Thành viên nào có quyền Xem Kênh và Nhắn Tin trong một kênh cụ thể (hoặc kênh hiện tại)',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        channelId: { type: 'STRING', description: 'ID của kênh cần kiểm tra quyền' }
+      },
+      required: ['channelId']
+    }
+  },
+  {
     name: 'lockOrUnlockChannels',
     description: 'Khóa hoặc Mở khóa gửi tin nhắn trên kênh cho @everyone khi có sự cố',
     parameters: {
@@ -443,6 +454,7 @@ const TOOL_HANDLERS = {
   softDeleteChannel: channelTools.softDeleteChannel,
   restoreDeletedChannel: channelTools.restoreDeletedChannel,
   emptyTrashCategory: channelTools.emptyTrashCategory,
+  inspectChannelPermissions: channelTools.inspectChannelPermissions,
   lockOrUnlockChannels: channelTools.lockOrUnlockChannels,
   manageThreads: channelTools.manageThreads,
   manageWebhooks: channelTools.manageWebhooks,
