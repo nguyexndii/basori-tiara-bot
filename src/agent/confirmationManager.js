@@ -75,6 +75,43 @@ async function handleReadOnlyPlan(message, plan) {
           name: '👥 Thành Viên Inactive', 
           value: `Có **${item.result.inactiveMemberCount}** thành viên không hoạt động trong ${item.result.days} ngày qua.` 
         });
+      } else if (item.toolName === 'auditServerPermissions') {
+        const { exposedChannels = [], sensitiveRoles = [] } = item.result || {};
+
+        if (exposedChannels.length > 0) {
+          const chText = exposedChannels.slice(0, 6).map(c => 
+            `• <#${c.id}> (\`${c.name}\`): ${c.issue} ${c.canSend ? '*(có thể nhắn tin)*' : ''}`
+          ).join('\n');
+          embed.addFields({ 
+            name: `🚨 Kênh Nhạy Cảm Bị Hở Quyền Cho @everyone (${exposedChannels.length})`, 
+            value: chText.slice(0, 1024) 
+          });
+        } else {
+          embed.addFields({ 
+            name: '🔒 Kiểm Tra Kênh Nhạy Cảm', 
+            value: '✅ An toàn: Không phát hiện kênh nhạy cảm nào bị hở quyền xem cho `@everyone`.' 
+          });
+        }
+
+        if (sensitiveRoles.length > 0) {
+          const roleText = sensitiveRoles.slice(0, 7).map(r => 
+            `• <@&${r.id}> (**${r.name}** - ${r.memberCount} thành viên)\n   ↳ Quyền: \`${r.dangerousPermissions.join(', ')}\``
+          ).join('\n');
+          embed.addFields({ 
+            name: `⚠️ Vai Trò Nắm Quyền Quản Trị / Nguy Hiểm (${sensitiveRoles.length})`, 
+            value: roleText.slice(0, 1024) 
+          });
+        } else {
+          embed.addFields({ 
+            name: '🛡️ Kiểm Tra Vai Trò', 
+            value: '✅ An toàn: Không có vai trò thông thường nào sở hữu quyền nguy hiểm.' 
+          });
+        }
+      } else {
+        embed.addFields({
+          name: `📌 Kết Quả: \`${item.toolName}\``,
+          value: `\`\`\`json\n${JSON.stringify(item.result, null, 2).slice(0, 1000)}\n\`\`\``
+        });
       }
     }
 
