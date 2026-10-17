@@ -1,10 +1,12 @@
 // src/utils/logger.js
-// Hệ thống ghi log tập trung: Console, File .log và Kênh Discord 1559750487299850331
+// Hệ thống ghi log tập trung: Console, File .log và Kênh Discord
+// - Kênh Log Quản trị & Tin nhắn: 1559750487299850331
+// - Kênh Trạng thái Sức khỏe & Reconnect: 1547449482835394640 (Tag Admin 875358286487097395)
 
 const fs = require('fs');
 const path = require('path');
 const { EmbedBuilder } = require('discord.js');
-const { LOG_CHANNEL_ID } = require('../config/ids');
+const { LOG_CHANNEL_ID, STATUS_LOG_CHANNEL_ID, NOTIFY_ADMIN_ID } = require('../config/ids');
 const version = require('../config/version');
 
 const logFilePath = path.join(__dirname, '..', '..', 'bot-error.log');
@@ -20,7 +22,7 @@ function appendLogFile(level, message, details = '') {
   }
 }
 
-// Lấy channel log từ client
+// Lấy channel log chung (quản trị, tin nhắn, anti-spam)
 async function getLogChannel(client) {
   if (!client || !LOG_CHANNEL_ID) return null;
   try {
@@ -31,10 +33,22 @@ async function getLogChannel(client) {
   }
 }
 
-// 1. Log khi Bot khởi động thành công
+// Lấy channel riêng cho trạng thái sức khỏe bot (online / dc / reconnect)
+async function getStatusChannel(client) {
+  const targetId = STATUS_LOG_CHANNEL_ID || '1547449482835394640';
+  if (!client) return null;
+  try {
+    const channel = client.channels.cache.get(targetId) || await client.channels.fetch(targetId).catch(() => null);
+    return channel;
+  } catch {
+    return null;
+  }
+}
+
+// 1. Log khi Bot khởi động trực tuyến (Gửi kênh 1547449482835394640 và tag Admin 875358286487097395)
 async function logBotReady(client) {
   console.log(`🤖 [ONLINE] Bot đã đăng nhập: ${client.user.tag}`);
-  const channel = await getLogChannel(client);
+  const channel = await getStatusChannel(client);
   if (!channel) return;
 
   const embed = new EmbedBuilder()
@@ -49,7 +63,40 @@ async function logBotReady(client) {
     )
     .setTimestamp();
 
-  await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+  await channel.send({
+    content: `<@${NOTIFY_ADMIN_ID}> 🔔 **Bot đã kết nối trực tuyến!**`,
+    embeds: [embed],
+    allowedMentions: { users: [NOTIFY_ADMIN_ID] }
+  }).catch(() => {});
+}
+
+// 2. Log khi bot bị ngắt kết nối (DC) và kết nối lại thành công (Reconnect / Resume)
+async function logBotReconnected(client, shardId = 0) {
+  console.log(`🔄 [RECONNECTED] Bot đã khôi phục kết nối WebSocket (Shard ${shardId})`);
+  const channel = await getStatusChannel(client);
+  if (!channel) return;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x00B0F4)
+    .setTitle('🔄 Bot Đã Khôi Phục Kết Nối (Reconnected)')
+    .setDescription(`**${client.user.tag}** vừa bị ngắt kết nối tạm thời và đã tự động kết nối lại thành công!`)
+    .addFields(
+      { name: '💓 WebSocket Ping', value: `${Math.round(client.ws.ping)}ms`, inline: true },
+      { name: '📅 Thời gian', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+    )
+    .setTimestamp();
+
+  await channel.send({
+    content: `<@${NOTIFY_ADMIN_ID}> ⚠️ **Bot vừa bị ngắt kết nối và đã kết nối lại thành công!**`,
+    embeds: [embed],
+    allowedMentions: { users: [NOTIFY_ADMIN_ID] }
+  }).catch(() => {});
+}
+
+// 3. Log khi bot bị ngắt kết nối gateway
+async function logBotDisconnected(client, event, shardId = 0) {
+  console.warn(`🛑 [DISCONNECT] Bot bị ngắt kết nối Gateway (Shard ${shardId}):`, event?.reason || event?.code || 'Không rõ');
+  appendLogFile('WARN', `Gateway Disconnect Shard ${shardId}`, event);
 }
 
 // 2. Log khi người dùng gọi bất kỳ lệnh Slash nào
@@ -121,22 +168,26 @@ async function logSecurityAlert(client, { title, description, color = 0xED4245, 
   await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
 }
 
-// 5. Log lỗi hệ thống (Chống sập bot)
+// 5. Log lỗi hệ thống (Chống sập bot) - Báo trực tiếp kênh sức khỏe và tag Admin
 async function logSystemError(client, errorType, error) {
   const errMsg = error?.stack || error?.message || String(error);
   console.error('❌ [HỆ THỐNG] [%s]:', errorType, errMsg);
   appendLogFile('ERROR', errorType, errMsg);
 
-  const channel = await getLogChannel(client);
+  const channel = await getStatusChannel(client);
   if (!channel) return;
 
   const embed = new EmbedBuilder()
     .setColor(0xED4245)
-    .setTitle(`⚠️ Cảnh Báo Lỗi: ${errorType}`)
+    .setTitle(`🚨 Cảnh Báo Lỗi Hệ Thống: ${errorType}`)
     .setDescription(`\`\`\`js\n${errMsg.slice(0, 1900)}\n\`\`\``)
     .setTimestamp();
 
-  await channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
+  await channel.send({
+    content: `<@${NOTIFY_ADMIN_ID}> ⚠️ **Cảnh báo lỗi hệ thống / Ngoại lệ chưa xử lý!**`,
+    embeds: [embed],
+    allowedMentions: { users: [NOTIFY_ADMIN_ID] }
+  }).catch(() => {});
 }
 
 // 6. Log thành viên mới tham gia server
@@ -226,6 +277,8 @@ async function logMessageUpdate(client, oldMessage, newMessage) {
 
 module.exports = {
   logBotReady,
+  logBotReconnected,
+  logBotDisconnected,
   logCommandUsage,
   logModAction,
   logSecurityAlert,

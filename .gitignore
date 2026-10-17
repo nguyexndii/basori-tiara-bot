@@ -3,3 +3,15 @@ node_modules/
 data/
 *.zip
 *.log
+*.txt
+add_bot_to_test_rank.js
+create_test_channels.js
+deep_audit_to_dan_pho.js
+export_all_server_info.js
+hardening_to_dan_pho.js
+patch_permissions.js
+remove_locks_and_cleanup.js
+remove_public_voice_locks.js
+revert_test_rank.js
+setup_level_and_voice_roles.js
+
