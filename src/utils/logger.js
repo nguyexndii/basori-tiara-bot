@@ -8,6 +8,7 @@ const path = require('path');
 const { EmbedBuilder } = require('discord.js');
 const { LOG_CHANNEL_ID, STATUS_LOG_CHANNEL_ID, NOTIFY_ADMIN_ID } = require('../config/ids');
 const version = require('../config/version');
+const { isLogChannel } = require('./logChannelGuard');
 
 const logFilePath = path.join(__dirname, '..', '..', 'bot-error.log');
 
@@ -230,7 +231,7 @@ async function logMemberRemove(client, member) {
 
 // 8. Log tin nhắn bị xóa
 async function logMessageDelete(client, message) {
-  if (!message || message.author?.bot || message.channelId === LOG_CHANNEL_ID) return;
+  if (!message || message.author?.bot || isLogChannel(message.channel)) return;
   const channel = await getLogChannel(client);
   if (!channel) return;
 
@@ -251,7 +252,7 @@ async function logMessageDelete(client, message) {
 
 // 9. Log tin nhắn được chỉnh sửa
 async function logMessageUpdate(client, oldMessage, newMessage) {
-  if (!newMessage || newMessage.author?.bot || newMessage.channelId === LOG_CHANNEL_ID) return;
+  if (!newMessage || newMessage.author?.bot || isLogChannel(newMessage.channel)) return;
   if (oldMessage?.content === newMessage?.content) return;
 
   const channel = await getLogChannel(client);
